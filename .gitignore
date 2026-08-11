@@ -1,0 +1,14 @@
+# compiled binary
+terraform-provider-nxip
+terraform-provider-nxip.exe
+
+# goreleaser output
+dist/
+
+# local terraform files, in case any examples/ get added later
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+.DS_Store
