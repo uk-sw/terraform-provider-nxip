@@ -98,14 +98,13 @@ func (r *PoolResource) Configure(ctx context.Context, req resource.ConfigureRequ
 }
 
 // poolResponse mirrors the JSON shape returned by the nxip API for a single
-// pool (POST /v1/pools and GET /v1/pools/:id). The pool's own CIDR comes
-// back under "cidrBlock" — there is no separate "cidr" field server-side
-// (GET also includes a "utilization" object; deliberately not mapped here,
-// unknown JSON fields are ignored on decode).
+// pool (POST /v1/pools and GET /v1/pools/:id). GET also includes a
+// "utilization" object; deliberately not mapped here, unknown JSON fields
+// are ignored on decode.
 type poolResponse struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
-	CIDRBlock   string `json:"cidrBlock"`
+	CIDR        string `json:"cidr"`
 	Family      string `json:"family"`
 	Environment string `json:"environment"`
 	Region      string `json:"region"`
@@ -169,7 +168,7 @@ func (r *PoolResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 
 	state.ID = types.StringValue(result.ID)
 	state.Name = types.StringValue(result.Name)
-	state.CIDR = types.StringValue(result.CIDRBlock)
+	state.CIDR = types.StringValue(result.CIDR)
 	state.Family = types.StringValue(result.Family)
 	state.Environment = types.StringValue(result.Environment)
 	state.Region = types.StringValue(result.Region)
