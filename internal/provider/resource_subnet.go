@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/mapplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -36,6 +38,7 @@ type SubnetResourceModel struct {
 	Name           types.String `tfsdk:"name"`
 	Description    types.String `tfsdk:"description"`
 	CIDR           types.String `tfsdk:"cidr"`
+	Metadata       types.Map    `tfsdk:"metadata"`
 }
 
 func (r *SubnetResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -141,6 +144,18 @@ func (r *SubnetResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				Computed:    true,
 				Description: "The allocated non-overlapping CIDR block returned by nxip API (e.g. 10.240.12.0/24).",
 			},
+			"metadata": schema.MapAttribute{
+				ElementType: types.StringType,
+				Optional:    true,
+				Computed:    true,
+				Description: "Free-form key/value tags for this subnet (e.g. vpc_id, cost_center) — not " +
+					"interpreted by nxip, stored and returned as-is. Computed as well as Optional so a config " +
+					"that never sets this reads back as an empty map rather than null, matching what the API " +
+					"returns. Subnets are immutable: changing this forces a new resource.",
+				PlanModifiers: []planmodifier.Map{
+					mapplanmodifier.RequiresReplace(),
+				},
+			},
 		},
 	}
 }
@@ -157,22 +172,23 @@ func (r *SubnetResource) Configure(ctx context.Context, req resource.ConfigureRe
 // ParentSubnetID/Kind/Name/Description are pointers since the API returns
 // JSON null, not an empty string, for a subnet that doesn't have one.
 type subnetResponse struct {
-	ID             string  `json:"id"`
-	CIDR           string  `json:"cidr"`
-	PrefixLength   int64   `json:"prefixLength"`
-	Family         string  `json:"family"`
-	Environment    string  `json:"environment"`
-	Region         string  `json:"region"`
-	ParentSubnetID *string `json:"parentSubnetId"`
-	Kind           *string `json:"kind"`
-	Name           *string `json:"name"`
-	Description    *string `json:"description"`
+	ID             string            `json:"id"`
+	CIDR           string            `json:"cidr"`
+	PrefixLength   int64             `json:"prefixLength"`
+	Family         string            `json:"family"`
+	Environment    string            `json:"environment"`
+	Region         string            `json:"region"`
+	ParentSubnetID *string           `json:"parentSubnetId"`
+	Kind           *string           `json:"kind"`
+	Name           *string           `json:"name"`
+	Description    *string           `json:"description"`
+	Metadata       map[string]string `json:"metadata"`
 }
 
 // applySubnetResponse copies API response fields into the resource
 // model — shared by Create and Read so the two can't drift apart on which
 // fields get synced back into state.
-func applySubnetResponse(model *SubnetResourceModel, result subnetResponse) {
+func applySubnetResponse(ctx context.Context, model *SubnetResourceModel, result subnetResponse) diag.Diagnostics {
 	model.ID = types.StringValue(result.ID)
 	model.CIDR = types.StringValue(result.CIDR)
 	model.PrefixLength = types.Int64Value(result.PrefixLength)
@@ -205,6 +221,10 @@ func applySubnetResponse(model *SubnetResourceModel, result subnetResponse) {
 	} else {
 		model.Description = types.StringNull()
 	}
+
+	metadataValue, diags := types.MapValueFrom(ctx, types.StringType, result.Metadata)
+	model.Metadata = metadataValue
+	return diags
 }
 
 func (r *SubnetResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -245,6 +265,14 @@ func (r *SubnetResource) Create(ctx context.Context, req resource.CreateRequest,
 	if !plan.Description.IsNull() {
 		payload["description"] = plan.Description.ValueString()
 	}
+	if !plan.Metadata.IsNull() && !plan.Metadata.IsUnknown() {
+		var metadata map[string]string
+		resp.Diagnostics.Append(plan.Metadata.ElementsAs(ctx, &metadata, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		payload["metadata"] = metadata
+	}
 
 	var result subnetResponse
 	status, err := r.client.do(ctx, http.MethodPost, "/v1/subnets", payload, &result)
@@ -257,7 +285,10 @@ func (r *SubnetResource) Create(ctx context.Context, req resource.CreateRequest,
 		return
 	}
 
-	applySubnetResponse(&plan, result)
+	resp.Diagnostics.Append(applySubnetResponse(ctx, &plan, result)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -288,7 +319,10 @@ func (r *SubnetResource) Read(ctx context.Context, req resource.ReadRequest, res
 		return
 	}
 
-	applySubnetResponse(&state, result)
+	resp.Diagnostics.Append(applySubnetResponse(ctx, &state, result)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
