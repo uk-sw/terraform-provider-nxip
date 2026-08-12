@@ -96,12 +96,11 @@ func (c *nxipClient) do(ctx context.Context, method, path string, body any, out 
 		}
 	}
 
-	if out != nil && len(respBody) > 0 {
-		if err := json.Unmarshal(respBody, out); err != nil {
-			return httpResp.StatusCode, "", fmt.Errorf("failed to parse nxip API response: %w", err)
-		}
-	}
-
+	// Extracted before the `out` decode below, and independently of whether
+	// that decode succeeds: a malformed body (e.g. an infra-layer proxy's
+	// own HTML error page, not the nxip API's JSON) would otherwise cause
+	// the `out` decode to fail and return early, discarding a `message`
+	// that — had it been present — would still have been worth surfacing.
 	var apiMessage string
 	if len(respBody) > 0 {
 		var errBody struct {
@@ -113,6 +112,12 @@ func (c *nxipClient) do(ctx context.Context, method, path string, body any, out 
 		// responses populate it.
 		if json.Unmarshal(respBody, &errBody) == nil {
 			apiMessage = errBody.Message
+		}
+	}
+
+	if out != nil && len(respBody) > 0 {
+		if err := json.Unmarshal(respBody, out); err != nil {
+			return httpResp.StatusCode, apiMessage, fmt.Errorf("failed to parse nxip API response: %w", err)
 		}
 	}
 
