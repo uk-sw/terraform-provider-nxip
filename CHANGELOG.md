@@ -4,6 +4,10 @@ All notable changes to this provider are documented here.
 
 ## Unreleased
 
+- **Error messages now include the nxip API's own explanation, not just an HTTP status code.** Every resource (`nxip_pool`, `nxip_subnet`) previously discarded the API's response body on failure — a `409` on pool creation showed only `nxip API failed pool creation request with status 409`, even though the API had already sent back a specific reason (which CIDR conflicted, or which environment/region/family combination). Fixed at the shared HTTP client level so it applies uniformly: a conflict now reads like `failed to create pool: An IP Pool with CIDR 10.0.0.0/16 already exists in production / us-east-1. (HTTP 409)`. Pool deletion's "still has subnets attached" error now also includes the API's own subnet count and pool name instead of a generic hardcoded message.
+
+## 0.1.0-alpha10 — 2026-08-12
+
 - Added a `metadata` attribute to `nxip_subnet`: a free-form map of string key/value tags (e.g. `vpc_id`, `cost_center`), stored and returned as-is. Optional and Computed — a config that never sets it reads back as an empty map. Immutable, like every other `nxip_subnet` attribute: changing it forces a new resource.
 
 ## 0.1.0-alpha9 — 2026-08-12

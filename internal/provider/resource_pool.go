@@ -2,7 +2,6 @@ package provider
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -126,13 +125,13 @@ func (r *PoolResource) Create(ctx context.Context, req resource.CreateRequest, r
 	}
 
 	var result poolResponse
-	status, err := r.client.do(ctx, http.MethodPost, "/v1/pools", payload, &result)
+	status, apiMessage, err := r.client.do(ctx, http.MethodPost, "/v1/pools", payload, &result)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", err.Error())
 		return
 	}
 	if status != http.StatusCreated {
-		resp.Diagnostics.AddError("API Error", fmt.Sprintf("nxip API failed pool creation request with status %d", status))
+		resp.Diagnostics.AddError("API Error", apiErrorSummary("failed to create pool", status, apiMessage))
 		return
 	}
 
@@ -149,7 +148,7 @@ func (r *PoolResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 	}
 
 	var result poolResponse
-	status, err := r.client.do(ctx, http.MethodGet, "/v1/pools/"+state.ID.ValueString(), nil, &result)
+	status, apiMessage, err := r.client.do(ctx, http.MethodGet, "/v1/pools/"+state.ID.ValueString(), nil, &result)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", err.Error())
 		return
@@ -162,7 +161,7 @@ func (r *PoolResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		return
 	}
 	if status != http.StatusOK {
-		resp.Diagnostics.AddError("API Error", fmt.Sprintf("nxip API failed to fetch pool with status %d", status))
+		resp.Diagnostics.AddError("API Error", apiErrorSummary("failed to fetch pool", status, apiMessage))
 		return
 	}
 
@@ -196,7 +195,7 @@ func (r *PoolResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 		return
 	}
 
-	status, err := r.client.do(ctx, http.MethodDelete, "/v1/pools/"+state.ID.ValueString(), nil, nil)
+	status, apiMessage, err := r.client.do(ctx, http.MethodDelete, "/v1/pools/"+state.ID.ValueString(), nil, nil)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", err.Error())
 		return
@@ -206,20 +205,20 @@ func (r *PoolResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 	// successful (idempotent) delete. Pool delete returns 204 No Content on
 	// success — unlike subnet delete, which returns 200 with a body. A
 	// 400 here means the pool still has subnets attached (the API refuses
-	// to delete a non-empty pool) — surfacing that as a clear error is more
-	// useful than a generic one, since it usually means Terraform's
-	// destroy ordering put the pool before a subnet that still
-	// references it (or a subnet was created outside Terraform).
+	// to delete a non-empty pool) — the API's own message already names the
+	// pool and the exact subnet count; appended Terraform-specific guidance
+	// covers the usual cause (destroy ordering put the pool before a subnet
+	// that still references it, or a subnet was created outside Terraform).
 	if status == http.StatusBadRequest {
 		resp.Diagnostics.AddError(
 			"API Error",
-			"nxip API refused to delete this pool: it still has subnets attached. "+
-				"Release/destroy any nxip_subnet resources referencing this pool first.",
+			apiErrorSummary("failed to delete pool", status, apiMessage)+
+				" — destroy any nxip_subnet resources referencing this pool first.",
 		)
 		return
 	}
 	if status != http.StatusNoContent && status != http.StatusNotFound {
-		resp.Diagnostics.AddError("API Error", fmt.Sprintf("nxip API failed to delete pool with status %d", status))
+		resp.Diagnostics.AddError("API Error", apiErrorSummary("failed to delete pool", status, apiMessage))
 		return
 	}
 }

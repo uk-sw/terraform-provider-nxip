@@ -2,7 +2,6 @@ package provider
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -275,13 +274,13 @@ func (r *SubnetResource) Create(ctx context.Context, req resource.CreateRequest,
 	}
 
 	var result subnetResponse
-	status, err := r.client.do(ctx, http.MethodPost, "/v1/subnets", payload, &result)
+	status, apiMessage, err := r.client.do(ctx, http.MethodPost, "/v1/subnets", payload, &result)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", err.Error())
 		return
 	}
 	if status != http.StatusCreated {
-		resp.Diagnostics.AddError("API Error", fmt.Sprintf("nxip API failed subnet request with status %d", status))
+		resp.Diagnostics.AddError("API Error", apiErrorSummary("failed to create subnet", status, apiMessage))
 		return
 	}
 
@@ -301,7 +300,7 @@ func (r *SubnetResource) Read(ctx context.Context, req resource.ReadRequest, res
 	}
 
 	var result subnetResponse
-	status, err := r.client.do(ctx, http.MethodGet, "/v1/subnets/"+state.ID.ValueString(), nil, &result)
+	status, apiMessage, err := r.client.do(ctx, http.MethodGet, "/v1/subnets/"+state.ID.ValueString(), nil, &result)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", err.Error())
 		return
@@ -315,7 +314,7 @@ func (r *SubnetResource) Read(ctx context.Context, req resource.ReadRequest, res
 		return
 	}
 	if status != http.StatusOK {
-		resp.Diagnostics.AddError("API Error", fmt.Sprintf("nxip API failed to fetch subnet with status %d", status))
+		resp.Diagnostics.AddError("API Error", apiErrorSummary("failed to fetch subnet", status, apiMessage))
 		return
 	}
 
@@ -349,7 +348,7 @@ func (r *SubnetResource) Delete(ctx context.Context, req resource.DeleteRequest,
 		return
 	}
 
-	status, err := r.client.do(ctx, http.MethodDelete, "/v1/subnets/"+state.ID.ValueString(), nil, nil)
+	status, apiMessage, err := r.client.do(ctx, http.MethodDelete, "/v1/subnets/"+state.ID.ValueString(), nil, nil)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", err.Error())
 		return
@@ -359,7 +358,7 @@ func (r *SubnetResource) Delete(ctx context.Context, req resource.DeleteRequest,
 	// a successful (idempotent) delete rather than an error. Subnet
 	// delete returns 200 (with a body), not 204 — unlike pool delete.
 	if status != http.StatusOK && status != http.StatusNotFound {
-		resp.Diagnostics.AddError("API Error", fmt.Sprintf("nxip API failed to release subnet with status %d", status))
+		resp.Diagnostics.AddError("API Error", apiErrorSummary("failed to release subnet", status, apiMessage))
 		return
 	}
 }
