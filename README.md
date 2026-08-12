@@ -2,7 +2,7 @@
 
 Terraform provider for [nxip](https://nxip.dev) — IP address management built API-first for infrastructure-as-code. Manages dynamic, conflict-free CIDR allocations across multi-cloud and on-prem environments.
 
-**Status: not yet published to the Terraform Registry.** Source-build only for now — see "Local development" below. This README will get real `source = "uk-sw/nxip"` install instructions once that's live.
+**Status: pre-release / early access, not yet on the Terraform Registry.** Source-build only for now — see "Local development" below. When published, the first release will be tagged as a pre-release (e.g. `v0.1.0-alpha1`), which `terraform init` will not resolve to unless pinned to that exact version — deliberate, not an oversight. Resource schemas may still change, and the nxip API and this provider are both still being validated with real users. **Do not use for production infrastructure yet.** The Free tier backing the API carries no data-durability guarantee — see [nxip's Terms of Service](https://nx-ip.com/terms).
 
 ## Usage (once published)
 
@@ -10,7 +10,8 @@ Terraform provider for [nxip](https://nxip.dev) — IP address management built 
 terraform {
   required_providers {
     nxip = {
-      source = "uk-sw/nxip"
+      source  = "uk-sw/nxip"
+      version = "0.1.0-alpha1" # pin the exact pre-release version while this is still early access
     }
   }
 }

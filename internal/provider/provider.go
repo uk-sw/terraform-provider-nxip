@@ -36,7 +36,10 @@ func (p *NxipProvider) Metadata(ctx context.Context, req provider.MetadataReques
 
 func (p *NxipProvider) Schema(ctx context.Context, req provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages dynamic, conflict-free IP CIDR allocations across multi-cloud environments.",
+		Description: "Manages dynamic, conflict-free IP CIDR allocations across multi-cloud environments. " +
+			"PRE-RELEASE: this provider and the nxip API behind it are still being validated with real " +
+			"users — resource schemas may change, and the Free tier backing this API carries no data-" +
+			"durability guarantee. Do not use for production infrastructure yet.",
 		Attributes: map[string]schema.Attribute{
 			"api_key": schema.StringAttribute{
 				Description: "API Key for nxip Control Plane. Can also be set via the NXIP_API_KEY " +
