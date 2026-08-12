@@ -14,18 +14,18 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-var _ resource.Resource = &AllocationResource{}
-var _ resource.ResourceWithImportState = &AllocationResource{}
+var _ resource.Resource = &SubnetResource{}
+var _ resource.ResourceWithImportState = &SubnetResource{}
 
-type AllocationResource struct {
+type SubnetResource struct {
 	client *nxipClient
 }
 
-func NewAllocationResource() resource.Resource {
-	return &AllocationResource{}
+func NewSubnetResource() resource.Resource {
+	return &SubnetResource{}
 }
 
-type AllocationResourceModel struct {
+type SubnetResourceModel struct {
 	ID             types.String `tfsdk:"id"`
 	Environment    types.String `tfsdk:"environment"`
 	Region         types.String `tfsdk:"region"`
@@ -38,11 +38,11 @@ type AllocationResourceModel struct {
 	CIDR           types.String `tfsdk:"cidr"`
 }
 
-func (r *AllocationResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
-	resp.TypeName = req.ProviderTypeName + "_allocation"
+func (r *SubnetResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
+	resp.TypeName = req.ProviderTypeName + "_subnet"
 }
 
-func (r *AllocationResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
+func (r *SubnetResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Description: "Allocates a dynamic, non-overlapping CIDR subnet block. Either routes to a matching " +
 			"nxip_pool by environment/region/family — auto-resolving onto a kind-tagged subnet under that " +
@@ -54,7 +54,7 @@ func (r *AllocationResource) Schema(ctx context.Context, req resource.SchemaRequ
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:    true,
-				Description: "Unique identifier for the allocation record.",
+				Description: "Unique identifier for the subnet record.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
@@ -63,8 +63,8 @@ func (r *AllocationResource) Schema(ctx context.Context, req resource.SchemaRequ
 				Optional: true,
 				Computed: true,
 				Description: "Target environment (e.g. production, staging). Required unless parent_subnet_id " +
-					"is set — a nested allocation inherits environment/region from its parent, so this is " +
-					"populated automatically after apply rather than needing to be supplied. Allocations are " +
+					"is set — a nested subnet inherits environment/region from its parent, so this is " +
+					"populated automatically after apply rather than needing to be supplied. Subnets are " +
 					"immutable: changing this forces a new resource.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
@@ -74,7 +74,7 @@ func (r *AllocationResource) Schema(ctx context.Context, req resource.SchemaRequ
 				Optional: true,
 				Computed: true,
 				Description: "Target region (e.g. uksouth, us-east-1). Required unless parent_subnet_id is " +
-					"set — see environment's description. Allocations are immutable: changing this forces a " +
+					"set — see environment's description. Subnets are immutable: changing this forces a " +
 					"new resource.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
@@ -83,7 +83,7 @@ func (r *AllocationResource) Schema(ctx context.Context, req resource.SchemaRequ
 			"family": schema.StringAttribute{
 				Required: true,
 				Description: "Address family: \"IPV4\" or \"IPV6\". Determines which pool this routes to — a pool " +
-					"is scoped to exactly one family per environment/region. Allocations are immutable: changing " +
+					"is scoped to exactly one family per environment/region. Subnets are immutable: changing " +
 					"this forces a new resource. Validated server-side; an invalid value returns an API error.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
@@ -91,7 +91,7 @@ func (r *AllocationResource) Schema(ctx context.Context, req resource.SchemaRequ
 			},
 			"prefix_length": schema.Int64Attribute{
 				Required:    true,
-				Description: "Desired CIDR prefix size (e.g. 24 for a /24 IPv4 subnet, or 64 for a /64 IPv6 subnet). Allocations are immutable: changing this forces a new resource.",
+				Description: "Desired CIDR prefix size (e.g. 24 for a /24 IPv4 subnet, or 64 for a /64 IPv6 subnet). Subnets are immutable: changing this forces a new resource.",
 				PlanModifiers: []planmodifier.Int64{
 					int64planmodifier.RequiresReplace(),
 				},
@@ -99,15 +99,15 @@ func (r *AllocationResource) Schema(ctx context.Context, req resource.SchemaRequ
 			"parent_subnet_id": schema.StringAttribute{
 				Optional: true,
 				Computed: true,
-				Description: "Nest this allocation directly under an existing subnet (e.g. another " +
-					"nxip_allocation's id) instead of routing to a pool by environment/region/family — the " +
+				Description: "Nest this subnet directly under an existing subnet (e.g. another " +
+					"nxip_subnet's id) instead of routing to a pool by environment/region/family — the " +
 					"deliberate, admin-facing path for building structure beyond what environment/region/" +
 					"family alone can disambiguate (e.g. a second VPC-scoped subnet under the same region). " +
 					"When set, environment/region are inherited from the parent, not read from this config. " +
 					"Computed as well as Optional: even a config that never sets this can end up nested, via " +
 					"auto-resolution onto a kind-tagged subnet matching environment/region/family — this is " +
 					"populated automatically after apply in that case, not left null. " +
-					"Allocations are immutable: changing this forces a new resource.",
+					"Subnets are immutable: changing this forces a new resource.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
@@ -116,23 +116,23 @@ func (r *AllocationResource) Schema(ctx context.Context, req resource.SchemaRequ
 				Optional: true,
 				Description: "Free-text label for what this level of an address plan represents (\"region\", " +
 					"\"vpc\", \"site\", \"vlan\"...) — not validated against a fixed list. Only meaningful on a " +
-					"top-level allocation (no parent_subnet_id): it's what makes this allocation eligible as " +
+					"top-level subnet (no parent_subnet_id): it's what makes this subnet eligible as " +
 					"the auto-resolution landing point for later requests matching the same environment/" +
-					"region/family. Allocations are immutable: changing this forces a new resource.",
+					"region/family. Subnets are immutable: changing this forces a new resource.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"name": schema.StringAttribute{
 				Optional:    true,
-				Description: "Human-readable name for this allocation (e.g. \"App Team A\"). Allocations are immutable: changing this forces a new resource.",
+				Description: "Human-readable name for this subnet (e.g. \"App Team A\"). Subnets are immutable: changing this forces a new resource.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"description": schema.StringAttribute{
 				Optional:    true,
-				Description: "Free-text notes for why this allocation exists. Allocations are immutable: changing this forces a new resource.",
+				Description: "Free-text notes for why this subnet exists. Subnets are immutable: changing this forces a new resource.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
@@ -145,22 +145,20 @@ func (r *AllocationResource) Schema(ctx context.Context, req resource.SchemaRequ
 	}
 }
 
-func (r *AllocationResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
+func (r *SubnetResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
 	if req.ProviderData == nil {
 		return
 	}
 	r.client = newNxipClient(req.ProviderData.(*NxipProviderModel))
 }
 
-// allocationResponse mirrors the JSON shape returned by the nxip API for a
-// single allocation (POST /v1/allocations and GET /v1/allocations/:id).
-// The allocated block comes back under "allocatedCidr" — there is no
-// separate "cidr" field server-side. ParentSubnetID/Kind/Name/Description
-// are pointers since the API returns JSON null, not an empty string, for
-// an allocation that doesn't have one.
-type allocationResponse struct {
+// subnetResponse mirrors the JSON shape returned by the nxip API for a
+// single subnet (POST /v1/subnets and GET /v1/subnets/:id).
+// ParentSubnetID/Kind/Name/Description are pointers since the API returns
+// JSON null, not an empty string, for a subnet that doesn't have one.
+type subnetResponse struct {
 	ID             string  `json:"id"`
-	AllocatedCIDR  string  `json:"allocatedCidr"`
+	CIDR           string  `json:"cidr"`
 	PrefixLength   int64   `json:"prefixLength"`
 	Family         string  `json:"family"`
 	Environment    string  `json:"environment"`
@@ -171,16 +169,16 @@ type allocationResponse struct {
 	Description    *string `json:"description"`
 }
 
-// applyAllocationResponse copies API response fields into the resource
+// applySubnetResponse copies API response fields into the resource
 // model — shared by Create and Read so the two can't drift apart on which
 // fields get synced back into state.
-func applyAllocationResponse(model *AllocationResourceModel, result allocationResponse) {
+func applySubnetResponse(model *SubnetResourceModel, result subnetResponse) {
 	model.ID = types.StringValue(result.ID)
-	model.CIDR = types.StringValue(result.AllocatedCIDR)
+	model.CIDR = types.StringValue(result.CIDR)
 	model.PrefixLength = types.Int64Value(result.PrefixLength)
 	model.Family = types.StringValue(result.Family)
 	// Always synced from the response, even when the caller supplied them:
-	// for a nested allocation (parent_subnet_id set) these are server-
+	// for a nested subnet (parent_subnet_id set) these are server-
 	// derived, inherited from the parent rather than read from config, so
 	// environment/region are Optional+Computed in the schema specifically
 	// to allow this.
@@ -209,8 +207,8 @@ func applyAllocationResponse(model *AllocationResourceModel, result allocationRe
 	}
 }
 
-func (r *AllocationResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	var plan AllocationResourceModel
+func (r *SubnetResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
+	var plan SubnetResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -248,37 +246,37 @@ func (r *AllocationResource) Create(ctx context.Context, req resource.CreateRequ
 		payload["description"] = plan.Description.ValueString()
 	}
 
-	var result allocationResponse
-	status, err := r.client.do(ctx, http.MethodPost, "/v1/allocations", payload, &result)
+	var result subnetResponse
+	status, err := r.client.do(ctx, http.MethodPost, "/v1/subnets", payload, &result)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", err.Error())
 		return
 	}
 	if status != http.StatusCreated {
-		resp.Diagnostics.AddError("API Error", fmt.Sprintf("nxip API failed allocation request with status %d", status))
+		resp.Diagnostics.AddError("API Error", fmt.Sprintf("nxip API failed subnet request with status %d", status))
 		return
 	}
 
-	applyAllocationResponse(&plan, result)
+	applySubnetResponse(&plan, result)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-func (r *AllocationResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
-	var state AllocationResourceModel
+func (r *SubnetResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	var state SubnetResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	var result allocationResponse
-	status, err := r.client.do(ctx, http.MethodGet, "/v1/allocations/"+state.ID.ValueString(), nil, &result)
+	var result subnetResponse
+	status, err := r.client.do(ctx, http.MethodGet, "/v1/subnets/"+state.ID.ValueString(), nil, &result)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", err.Error())
 		return
 	}
 
-	// If the allocation was released outside of Terraform (e.g. deleted
+	// If the subnet was released outside of Terraform (e.g. deleted
 	// directly via the API), drop it from state so Terraform plans to
 	// recreate it rather than erroring on drift.
 	if status == http.StatusNotFound {
@@ -286,23 +284,23 @@ func (r *AllocationResource) Read(ctx context.Context, req resource.ReadRequest,
 		return
 	}
 	if status != http.StatusOK {
-		resp.Diagnostics.AddError("API Error", fmt.Sprintf("nxip API failed to fetch allocation with status %d", status))
+		resp.Diagnostics.AddError("API Error", fmt.Sprintf("nxip API failed to fetch subnet with status %d", status))
 		return
 	}
 
-	applyAllocationResponse(&state, result)
+	applySubnetResponse(&state, result)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
-func (r *AllocationResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+func (r *SubnetResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	// All user-configurable attributes (environment, region, family,
 	// prefix_length) are marked RequiresReplace in the schema, since
-	// allocations are immutable server-side. Terraform will therefore
+	// subnets are immutable server-side. Terraform will therefore
 	// destroy and recreate the resource rather than reach this method for
 	// any meaningful change. This is kept only to satisfy the
 	// resource.Resource interface.
-	var plan AllocationResourceModel
+	var plan SubnetResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -310,35 +308,35 @@ func (r *AllocationResource) Update(ctx context.Context, req resource.UpdateRequ
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-func (r *AllocationResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
-	var state AllocationResourceModel
+func (r *SubnetResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
+	var state SubnetResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	status, err := r.client.do(ctx, http.MethodDelete, "/v1/allocations/"+state.ID.ValueString(), nil, nil)
+	status, err := r.client.do(ctx, http.MethodDelete, "/v1/subnets/"+state.ID.ValueString(), nil, nil)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", err.Error())
 		return
 	}
 
-	// A 404 means the allocation is already gone server-side. Treat this as
-	// a successful (idempotent) delete rather than an error. Allocation
+	// A 404 means the subnet is already gone server-side. Treat this as
+	// a successful (idempotent) delete rather than an error. Subnet
 	// delete returns 200 (with a body), not 204 — unlike pool delete.
 	if status != http.StatusOK && status != http.StatusNotFound {
-		resp.Diagnostics.AddError("API Error", fmt.Sprintf("nxip API failed to release allocation with status %d", status))
+		resp.Diagnostics.AddError("API Error", fmt.Sprintf("nxip API failed to release subnet with status %d", status))
 		return
 	}
 }
 
-// ImportState allows an existing allocation (created outside Terraform, or
+// ImportState allows an existing subnet (created outside Terraform, or
 // from a previous state file) to be brought under management with:
 //
-//	terraform import nxip_allocation.example <allocation-id>
+//	terraform import nxip_subnet.example <subnet-id>
 //
 // Only the ID is known at import time; Read (invoked automatically by the
 // framework after ImportState) populates the remaining attributes from the API.
-func (r *AllocationResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+func (r *SubnetResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }

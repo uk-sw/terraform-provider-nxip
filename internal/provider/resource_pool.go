@@ -39,7 +39,7 @@ func (r *PoolResource) Metadata(ctx context.Context, req resource.MetadataReques
 
 func (r *PoolResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Registers a top-level IP pool — the parent CIDR block that nxip_allocation resources " +
+		Description: "Registers a top-level IP pool — the parent CIDR block that nxip_subnet resources " +
 			"carve non-overlapping subnets from. A pool is scoped to exactly one address family per " +
 			"environment/region: to support both IPv4 and IPv6 for the same environment/region, create two " +
 			"pools (one per family), not one pool with a mixed range.",
@@ -205,17 +205,17 @@ func (r *PoolResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 
 	// A 404 means the pool is already gone server-side; treat as a
 	// successful (idempotent) delete. Pool delete returns 204 No Content on
-	// success — unlike allocation delete, which returns 200 with a body. A
+	// success — unlike subnet delete, which returns 200 with a body. A
 	// 400 here means the pool still has subnets attached (the API refuses
 	// to delete a non-empty pool) — surfacing that as a clear error is more
 	// useful than a generic one, since it usually means Terraform's
-	// destroy ordering put the pool before an allocation that still
-	// references it (or an allocation was created outside Terraform).
+	// destroy ordering put the pool before a subnet that still
+	// references it (or a subnet was created outside Terraform).
 	if status == http.StatusBadRequest {
 		resp.Diagnostics.AddError(
 			"API Error",
 			"nxip API refused to delete this pool: it still has subnets attached. "+
-				"Release/destroy any nxip_allocation resources referencing this pool first.",
+				"Release/destroy any nxip_subnet resources referencing this pool first.",
 		)
 		return
 	}

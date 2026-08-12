@@ -38,9 +38,9 @@ func testAccCheckPoolDestroyed(s *terraform.State) error {
 }
 
 // testAccPoolConfig uses region "acc-test-pool" (distinct from
-// "us-east-1", which the allocation tests and the seeded dev pool already
+// "us-east-1", which the subnet tests and the seeded dev pool already
 // occupy) so this test's pool doesn't collide with either the pre-seeded
-// pool or a pool an allocation test might implicitly depend on — a pool is
+// pool or a pool a subnet test might implicitly depend on — a pool is
 // unique per (organization, environment, region, family) server-side.
 func testAccPoolConfig(cidr string) string {
 	return fmt.Sprintf(`
@@ -99,15 +99,15 @@ func TestAccPoolResource_lifecycle(t *testing.T) {
 	})
 }
 
-// TestAccPoolAndAllocation_composition proves the two resources actually
-// compose the way a real user would rely on: an allocation referencing a
+// TestAccPoolAndSubnet_composition proves the two resources actually
+// compose the way a real user would rely on: a subnet referencing a
 // pool that's *also* managed by this same Terraform run, not a pool that
 // happens to pre-exist via seed data. Destroy order matters here too — the
-// allocation must be destroyed before the pool (Terraform infers this from
+// subnet must be destroyed before the pool (Terraform infers this from
 // the implicit dependency via the shared environment/region/family values;
 // the pool API itself also refuses to delete a non-empty pool as a
 // server-side backstop, see PoolResource.Delete).
-func TestAccPoolAndAllocation_composition(t *testing.T) {
+func TestAccPoolAndSubnet_composition(t *testing.T) {
 	config := fmt.Sprintf(`
 provider "nxip" {
   api_key = %q
@@ -122,7 +122,7 @@ resource "nxip_pool" "test" {
   region      = "acc-test-composition"
 }
 
-resource "nxip_allocation" "test" {
+resource "nxip_subnet" "test" {
   environment   = nxip_pool.test.environment
   region        = nxip_pool.test.region
   family        = nxip_pool.test.family
@@ -135,16 +135,16 @@ resource "nxip_allocation" "test" {
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		CheckDestroy: resource.ComposeAggregateTestCheckFunc(
 			testAccCheckPoolDestroyed,
-			testAccCheckAllocationDestroyed,
+			testAccCheckSubnetDestroyed,
 		),
 		Steps: []resource.TestStep{
 			{
 				Config: config,
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttrSet("nxip_pool.test", "id"),
-					resource.TestCheckResourceAttrSet("nxip_allocation.test", "id"),
-					resource.TestCheckResourceAttrSet("nxip_allocation.test", "cidr"),
-					resource.TestCheckResourceAttrPair("nxip_allocation.test", "region", "nxip_pool.test", "region"),
+					resource.TestCheckResourceAttrSet("nxip_subnet.test", "id"),
+					resource.TestCheckResourceAttrSet("nxip_subnet.test", "cidr"),
+					resource.TestCheckResourceAttrPair("nxip_subnet.test", "region", "nxip_pool.test", "region"),
 				),
 			},
 		},

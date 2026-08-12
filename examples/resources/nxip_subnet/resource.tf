@@ -1,4 +1,4 @@
-resource "nxip_allocation" "web_subnet" {
+resource "nxip_subnet" "web_subnet" {
   environment   = "production"
   region        = "us-east-1"
   family        = "IPV4"
