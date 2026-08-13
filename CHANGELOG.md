@@ -4,6 +4,10 @@ All notable changes to this provider are documented here.
 
 ## Unreleased
 
+- **Added `nxip_address`**: registers or reserves a specific IP address within an already-allocated `nxip_subnet` — the individual-address layer beneath the subnet itself. Deliberately manual-only (no auto-pick), matching the API: which address to use is normally chosen by whoever's deploying the host, or by DHCP, not requested blind from IPAM. Supports `status` (ACTIVE/RESERVED), `hostname`, and free-form `metadata`, and `terraform import` via a composite `<subnet_id>/<address_id>` identifier — unlike `nxip_pool`/`nxip_subnet`, an address's own ID alone isn't enough to fetch it, since its API route is nested under its parent subnet. Every attribute is immutable (`RequiresReplace`), matching `nxip_subnet` — there's no PATCH endpoint for addresses server-side.
+
+## 0.1.0-alpha12 — 2026-08-13
+
 - Internal fix: the API's error `message` is now extracted before attempting to decode a resource's own response shape, not after — so a malformed or unexpected response body no longer discards a `message` that was actually present and worth surfacing. No user-facing behavior change from `0.1.0-alpha11` in the normal case; only affects an edge case that hadn't been observed in practice.
 
 ## 0.1.0-alpha11 — 2026-08-13

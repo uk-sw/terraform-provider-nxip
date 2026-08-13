@@ -97,6 +97,7 @@ func (p *NxipProvider) Resources(ctx context.Context) []func() resource.Resource
 	return []func() resource.Resource{
 		NewSubnetResource,
 		NewPoolResource,
+		NewAddressResource,
 	}
 }
 
