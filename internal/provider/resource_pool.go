@@ -38,7 +38,7 @@ func (r *PoolResource) Metadata(ctx context.Context, req resource.MetadataReques
 
 func (r *PoolResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Registers a top-level IP pool — the parent CIDR block that nxip_subnet resources " +
+		Description: "Registers a top-level IP pool: the parent CIDR block that nxip_subnet resources " +
 			"carve non-overlapping subnets from. A pool is scoped to exactly one address family per " +
 			"environment/region: to support both IPv4 and IPv6 for the same environment/region, create two " +
 			"pools (one per family), not one pool with a mixed range.",
@@ -213,7 +213,7 @@ func (r *PoolResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 		resp.Diagnostics.AddError(
 			"API Error",
 			apiErrorSummary("failed to delete pool", status, apiMessage)+
-				" — destroy any nxip_subnet resources referencing this pool first.",
+				" Destroy any nxip_subnet resources referencing this pool first.",
 		)
 		return
 	}

@@ -47,11 +47,11 @@ func (r *SubnetResource) Metadata(ctx context.Context, req resource.MetadataRequ
 func (r *SubnetResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Description: "Allocates a dynamic, non-overlapping CIDR subnet block. Either routes to a matching " +
-			"nxip_pool by environment/region/family — auto-resolving onto a kind-tagged subnet under that " +
+			"nxip_pool by environment/region/family, auto-resolving onto a kind-tagged subnet under that " +
 			"pool first if one exists for that exact key, so this resource's config never has to change " +
-			"whether or not that structure exists yet — or, given parent_subnet_id, nests directly under " +
+			"whether or not that structure exists yet, or, given parent_subnet_id, nests directly under " +
 			"an existing subnet instead, bypassing auto-resolution entirely. Requires a pool to already " +
-			"exist for the target environment/region/family (see nxip_pool) — there is no implicit pool " +
+			"exist for the target environment/region/family (see nxip_pool); there is no implicit pool " +
 			"creation. See subnet-hierarchy.html in the nxip repo for the full reasoning.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -65,7 +65,7 @@ func (r *SubnetResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				Optional: true,
 				Computed: true,
 				Description: "Target environment (e.g. production, staging). Required unless parent_subnet_id " +
-					"is set — a nested subnet inherits environment/region from its parent, so this is " +
+					"is set. A nested subnet inherits environment/region from its parent, so this is " +
 					"populated automatically after apply rather than needing to be supplied. Subnets are " +
 					"immutable: changing this forces a new resource.",
 				PlanModifiers: []planmodifier.String{
@@ -76,7 +76,7 @@ func (r *SubnetResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				Optional: true,
 				Computed: true,
 				Description: "Target region (e.g. uksouth, us-east-1). Required unless parent_subnet_id is " +
-					"set — see environment's description. Subnets are immutable: changing this forces a " +
+					"set; see environment's description. Subnets are immutable: changing this forces a " +
 					"new resource.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
@@ -84,7 +84,7 @@ func (r *SubnetResource) Schema(ctx context.Context, req resource.SchemaRequest,
 			},
 			"family": schema.StringAttribute{
 				Required: true,
-				Description: "Address family: \"IPV4\" or \"IPV6\". Determines which pool this routes to — a pool " +
+				Description: "Address family: \"IPV4\" or \"IPV6\". Determines which pool this routes to: a pool " +
 					"is scoped to exactly one family per environment/region. Subnets are immutable: changing " +
 					"this forces a new resource. Validated server-side; an invalid value returns an API error.",
 				PlanModifiers: []planmodifier.String{
@@ -102,12 +102,12 @@ func (r *SubnetResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				Optional: true,
 				Computed: true,
 				Description: "Nest this subnet directly under an existing subnet (e.g. another " +
-					"nxip_subnet's id) instead of routing to a pool by environment/region/family — the " +
+					"nxip_subnet's id) instead of routing to a pool by environment/region/family. This is the " +
 					"deliberate, admin-facing path for building structure beyond what environment/region/" +
 					"family alone can disambiguate (e.g. a second VPC-scoped subnet under the same region). " +
 					"When set, environment/region are inherited from the parent, not read from this config. " +
 					"Computed as well as Optional: even a config that never sets this can end up nested, via " +
-					"auto-resolution onto a kind-tagged subnet matching environment/region/family — this is " +
+					"auto-resolution onto a kind-tagged subnet matching environment/region/family. This is " +
 					"populated automatically after apply in that case, not left null. " +
 					"Subnets are immutable: changing this forces a new resource.",
 				PlanModifiers: []planmodifier.String{
@@ -117,7 +117,7 @@ func (r *SubnetResource) Schema(ctx context.Context, req resource.SchemaRequest,
 			"kind": schema.StringAttribute{
 				Optional: true,
 				Description: "Free-text label for what this level of an address plan represents (\"region\", " +
-					"\"vpc\", \"site\", \"vlan\"...) — not validated against a fixed list. Only meaningful on a " +
+					"\"vpc\", \"site\", \"vlan\"...); not validated against a fixed list. Only meaningful on a " +
 					"top-level subnet (no parent_subnet_id): it's what makes this subnet eligible as " +
 					"the auto-resolution landing point for later requests matching the same environment/" +
 					"region/family. Subnets are immutable: changing this forces a new resource.",
@@ -147,7 +147,7 @@ func (r *SubnetResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				ElementType: types.StringType,
 				Optional:    true,
 				Computed:    true,
-				Description: "Free-form key/value tags for this subnet (e.g. vpc_id, cost_center) — not " +
+				Description: "Free-form key/value tags for this subnet (e.g. vpc_id, cost_center), not " +
 					"interpreted by nxip, stored and returned as-is. Computed as well as Optional so a config " +
 					"that never sets this reads back as an empty map rather than null, matching what the API " +
 					"returns. Subnets are immutable: changing this forces a new resource.",

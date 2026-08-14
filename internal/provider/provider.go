@@ -36,9 +36,10 @@ func (p *NxipProvider) Metadata(ctx context.Context, req provider.MetadataReques
 
 func (p *NxipProvider) Schema(ctx context.Context, req provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages dynamic, conflict-free IP CIDR subnets across multi-cloud environments. " +
+		Description: "IPAM (IP Address Management) for infrastructure-as-code. Manages dynamic, " +
+			"conflict-free IP CIDR subnets across multi-cloud and on-prem environments. " +
 			"PRE-RELEASE: this provider and the nxip API behind it are still being validated with real " +
-			"users — resource schemas may change, and the Free tier backing this API carries no data-" +
+			"users. Resource schemas may change, and the Free tier backing this API carries no data-" +
 			"durability guarantee. Do not use for production infrastructure yet.",
 		Attributes: map[string]schema.Attribute{
 			"api_key": schema.StringAttribute{

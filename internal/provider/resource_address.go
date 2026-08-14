@@ -43,8 +43,8 @@ func (r *AddressResource) Metadata(ctx context.Context, req resource.MetadataReq
 
 func (r *AddressResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Registers or reserves a specific IP address within an already-allocated nxip_subnet — the " +
-			"individual-address layer beneath the subnet itself. There is no auto-pick mode: unlike " +
+		Description: "Registers or reserves a specific IP address within an already-allocated nxip_subnet. This is " +
+			"the individual-address layer beneath the subnet itself. There is no auto-pick mode: unlike " +
 			"nxip_subnet, which address to use is normally chosen by whoever is deploying the host (or by " +
 			"DHCP), not requested blind from IPAM, so `address` is always explicit here.",
 		Attributes: map[string]schema.Attribute{
@@ -64,14 +64,14 @@ func (r *AddressResource) Schema(ctx context.Context, req resource.SchemaRequest
 			},
 			"address": schema.StringAttribute{
 				Required:    true,
-				Description: "The exact IP address to register (e.g. 10.240.12.5) — must fall within subnet_id's CIDR block. Immutable: changing this forces a new resource.",
+				Description: "The exact IP address to register (e.g. 10.240.12.5). Must fall within subnet_id's CIDR block. Immutable: changing this forces a new resource.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"family": schema.StringAttribute{
 				Computed:    true,
-				Description: "Address family (\"IPV4\" or \"IPV6\"), inherited from the parent subnet — not user-supplied.",
+				Description: "Address family (\"IPV4\" or \"IPV6\"), inherited from the parent subnet. Not user-supplied.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
@@ -96,7 +96,7 @@ func (r *AddressResource) Schema(ctx context.Context, req resource.SchemaRequest
 				ElementType: types.StringType,
 				Optional:    true,
 				Computed:    true,
-				Description: "Free-form key/value tags for this address (e.g. owner, asset_tag) — not " +
+				Description: "Free-form key/value tags for this address (e.g. owner, asset_tag), not " +
 					"interpreted by nxip, stored and returned as-is. Computed as well as Optional so a config " +
 					"that never sets this reads back as an empty map rather than null. Immutable: changing this forces a new resource.",
 				PlanModifiers: []planmodifier.Map{

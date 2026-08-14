@@ -3,12 +3,12 @@
 page_title: "nxip_pool Resource - terraform-provider-nxip"
 subcategory: ""
 description: |-
-  Registers a top-level IP pool — the parent CIDR block that nxip_subnet resources carve non-overlapping subnets from. A pool is scoped to exactly one address family per environment/region: to support both IPv4 and IPv6 for the same environment/region, create two pools (one per family), not one pool with a mixed range.
+  Registers a top-level IP pool: the parent CIDR block that nxip_subnet resources carve non-overlapping subnets from. A pool is scoped to exactly one address family per environment/region: to support both IPv4 and IPv6 for the same environment/region, create two pools (one per family), not one pool with a mixed range.
 ---
 
 # nxip_pool (Resource)
 
-Registers a top-level IP pool — the parent CIDR block that nxip_subnet resources carve non-overlapping subnets from. A pool is scoped to exactly one address family per environment/region: to support both IPv4 and IPv6 for the same environment/region, create two pools (one per family), not one pool with a mixed range.
+Registers a top-level IP pool: the parent CIDR block that nxip_subnet resources carve non-overlapping subnets from. A pool is scoped to exactly one address family per environment/region: to support both IPv4 and IPv6 for the same environment/region, create two pools (one per family), not one pool with a mixed range.
 
 ## Example Usage
 
