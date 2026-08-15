@@ -2,9 +2,12 @@
 
 All notable changes to this provider are documented here.
 
-## Unreleased
+## 0.1.0-alpha14 (2026-08-15)
 
 - **Added `nxip_address`**: registers or reserves a specific IP address within an already-allocated `nxip_subnet`, the individual-address layer beneath the subnet itself. Deliberately manual-only (no auto-pick), matching the API: which address to use is normally chosen by whoever's deploying the host, or by DHCP, not requested blind from IPAM. Supports `status` (ACTIVE/RESERVED), `hostname`, and free-form `metadata`, and `terraform import` via a composite `<subnet_id>/<address_id>` identifier; unlike `nxip_pool`/`nxip_subnet`, an address's own ID alone isn't enough to fetch it, since its API route is nested under its parent subnet. Every attribute is immutable (`RequiresReplace`), matching `nxip_subnet`; there's no PATCH endpoint for addresses server-side.
+- Added acceptance test coverage for IPv6 resources across the pool/subnet/address hierarchy.
+- The provider description now leads with "IPAM (IP Address Management)" instead of just "IP CIDR subnets", so the Registry listing's title, meta description, and search indexing actually surface for that term.
+- Internal fix: bumped the Go toolchain to 1.26.6, resolving four stdlib CVEs (`net/url`, `crypto/tls`, `encoding/asn1`, and an `idna` issue reached via `net/http`) that were failing CI's vulnerability scan. No user-facing behavior change.
 
 ## 0.1.0-alpha12 (2026-08-13)
 
