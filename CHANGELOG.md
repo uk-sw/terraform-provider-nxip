@@ -2,6 +2,12 @@
 
 All notable changes to this provider are documented here.
 
+## 0.2.0-alpha.1 (2026-08-15)
+
+- **Version scheme fix, no code changes.** Every prior pre-release tag used an unpadded, dot-less suffix (`alpha9`, `alpha10`, ...), which semver's precedence rules compare as plain text, not as numbers, once a pre-release identifier isn't purely digits. Under that rule, `"alpha9"` lexically sorts *above* `"alpha10"` through `"alpha14"` (`9` > `1` as the first differing character) - so every tool that follows the spec, including the Terraform Registry, correctly treated `0.1.0-alpha9` as the highest-precedence version ever published, regardless of publish order. That's why newer releases never became "latest".
+- Bumping the minor version (rather than only reformatting the suffix) is the actual fix: a higher `0.2.0` always outranks any `0.1.0-*` prerelease, regardless of the string-comparison quirk above. It's also an honest reflection that `0.1.0-alpha14` already added a genuinely new resource (`nxip_address`), which is what a minor bump is for.
+- Going forward, pre-release suffixes use a dot before the number (`alpha.N`, not `alphaN`), so the number is its own field and compares numerically.
+
 ## 0.1.0-alpha14 (2026-08-15)
 
 - **Added `nxip_address`**: registers or reserves a specific IP address within an already-allocated `nxip_subnet`, the individual-address layer beneath the subnet itself. Deliberately manual-only (no auto-pick), matching the API: which address to use is normally chosen by whoever's deploying the host, or by DHCP, not requested blind from IPAM. Supports `status` (ACTIVE/RESERVED), `hostname`, and free-form `metadata`, and `terraform import` via a composite `<subnet_id>/<address_id>` identifier; unlike `nxip_pool`/`nxip_subnet`, an address's own ID alone isn't enough to fetch it, since its API route is nested under its parent subnet. Every attribute is immutable (`RequiresReplace`), matching `nxip_subnet`; there's no PATCH endpoint for addresses server-side.
