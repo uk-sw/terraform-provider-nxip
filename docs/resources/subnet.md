@@ -48,3 +48,13 @@ resource "nxip_subnet" "web_subnet" {
 
 - `cidr` (String) The allocated non-overlapping CIDR block returned by nxip API (e.g. 10.240.12.0/24).
 - `id` (String) Unique identifier for the subnet record.
+
+## Import
+
+Import is supported using the following syntax:
+
+The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
+
+```shell
+terraform import nxip_subnet.web_subnet <subnet-id>
+```

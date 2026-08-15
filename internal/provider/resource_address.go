@@ -128,7 +128,7 @@ type addressResponse struct {
 	Metadata map[string]string `json:"metadata"`
 }
 
-// applyAddressResponse copies API response fields into the resource model —
+// applyAddressResponse copies API response fields into the resource model -
 // shared by Create and Read so the two can't drift apart on which fields
 // get synced back into state.
 func applyAddressResponse(ctx context.Context, model *AddressResourceModel, result addressResponse) diag.Diagnostics {
@@ -228,7 +228,7 @@ func (r *AddressResource) Read(ctx context.Context, req resource.ReadRequest, re
 }
 
 func (r *AddressResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	// Every attribute is RequiresReplace — there is no PATCH endpoint for
+	// Every attribute is RequiresReplace - there is no PATCH endpoint for
 	// addresses server-side. Terraform will destroy and recreate rather
 	// than reach this method for any meaningful change; kept only to
 	// satisfy the resource.Resource interface.
@@ -267,7 +267,7 @@ func (r *AddressResource) Delete(ctx context.Context, req resource.DeleteRequest
 //
 //	terraform import nxip_address.example <subnet-id>/<address-id>
 //
-// Unlike nxip_pool/nxip_subnet, this needs a composite identifier — the
+// Unlike nxip_pool/nxip_subnet, this needs a composite identifier - the
 // address's own ID alone isn't enough to fetch it, since its URL is nested
 // under its parent subnet (GET /v1/subnets/:id/addresses/:addressId). Read
 // (invoked automatically by the framework after ImportState) populates the
