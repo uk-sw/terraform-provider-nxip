@@ -2,6 +2,10 @@
 
 All notable changes to this provider are documented here.
 
+## 0.2.0-alpha.3 (2026-08-15)
+
+- The provider's Registry docs page now links to [nxip.dev](https://nxip.dev) (the product and REST API reference) and [nx-ip.com](https://nx-ip.com) (account signup). Added via a `MarkdownDescription` alongside the existing plain-text `Description` - the framework renders the former for documentation tooling and the latter for anything that can't render Markdown (CLI output, the language server).
+
 ## 0.2.0-alpha.2 (2026-08-15)
 
 - **The Registry's own documentation overview page now has a real getting-started example.** It previously only ever showed the bare `provider` block, with no indication of how `nxip_pool`/`nxip_subnet`/`nxip_address` actually fit together - now shows the same full, working end-to-end example already in the README.

@@ -36,8 +36,19 @@ func (p *NxipProvider) Metadata(ctx context.Context, req provider.MetadataReques
 
 func (p *NxipProvider) Schema(ctx context.Context, req provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
+		// Plain-text fallback for tooling that can't render Markdown (e.g.
+		// the language server, terraform plan/validate output) - kept
+		// free of links/formatting on purpose. MarkdownDescription below
+		// is what the Registry's own docs generator actually renders.
 		Description: "IPAM (IP Address Management) for infrastructure-as-code. Manages dynamic, " +
 			"conflict-free IP CIDR subnets across multi-cloud and on-prem environments. " +
+			"PRE-RELEASE: this provider and the nxip API behind it are still being validated with real " +
+			"users. Resource schemas may change, and the Free tier backing this API carries no data-" +
+			"durability guarantee. Do not use for production infrastructure yet.",
+		MarkdownDescription: "IPAM (IP Address Management) for infrastructure-as-code. Manages dynamic, " +
+			"conflict-free IP CIDR subnets across multi-cloud and on-prem environments. See " +
+			"[nxip.dev](https://nxip.dev) for the product itself and the underlying REST API reference, " +
+			"and [nx-ip.com](https://nx-ip.com) to create an account. " +
 			"PRE-RELEASE: this provider and the nxip API behind it are still being validated with real " +
 			"users. Resource schemas may change, and the Free tier backing this API carries no data-" +
 			"durability guarantee. Do not use for production infrastructure yet.",
