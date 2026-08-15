@@ -2,6 +2,11 @@
 
 All notable changes to this provider are documented here.
 
+## 0.2.0-alpha.2 (2026-08-15)
+
+- **The Registry's own documentation overview page now has a real getting-started example.** It previously only ever showed the bare `provider` block, with no indication of how `nxip_pool`/`nxip_subnet`/`nxip_address` actually fit together - now shows the same full, working end-to-end example already in the README.
+- `nxip_address` had no usage example at all, and along with `nxip_subnet`, was missing an `Import` section despite the README stating all three resources support `terraform import`. Both now document it, verified against the actual `ImportState` implementations.
+
 ## 0.2.0-alpha.1 (2026-08-15)
 
 - **Version scheme fix, no code changes.** Every prior pre-release tag used an unpadded, dot-less suffix (`alpha9`, `alpha10`, ...), which semver's precedence rules compare as plain text, not as numbers, once a pre-release identifier isn't purely digits. Under that rule, `"alpha9"` lexically sorts *above* `"alpha10"` through `"alpha14"` (`9` > `1` as the first differing character) - so every tool that follows the spec, including the Terraform Registry, correctly treated `0.1.0-alpha9` as the highest-precedence version ever published, regardless of publish order. That's why newer releases never became "latest".
