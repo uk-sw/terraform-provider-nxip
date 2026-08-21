@@ -23,14 +23,18 @@ jobs:
           go-version-file: go.mod
 
       - name: Import GPG key
-        uses: crazy-max/ghaction-import-gpg@v6
+        # SHA-pinned, not @v6: this step handles GPG_PRIVATE_KEY, the one
+        # secret whose compromise would let an attacker ship a trusted,
+        # signed malicious release. A mutable tag can be repointed by a
+        # compromised upstream account; a commit SHA can't.
+        uses: crazy-max/ghaction-import-gpg@e89d40939c28e39f97cf32126055eeae86ba74ec # v6.3.0
         id: import_gpg
         with:
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.PASSPHRASE }}
 
       - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
         with:
           args: release --clean
         env:
