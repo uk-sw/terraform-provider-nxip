@@ -20,12 +20,11 @@ terraform {
   }
 }
 
-provider "nxip" {
-  # api_key can also be left unset here and provided via the NXIP_API_KEY
-  # environment variable instead - the recommended approach for CI/CD, so
-  # a real credential never ends up written into a .tf file.
-  api_key = var.nxip_api_key
-}
+# Recommended: leave api_key unset here and provide it via the
+# NXIP_API_KEY environment variable instead, so a real credential never
+# ends up written into a .tf file. Get a key by signing up at
+# https://nx-ip.com.
+provider "nxip" {}
 
 # A pool is the top-level CIDR block that nxip_subnet resources carve
 # non-overlapping subnets from - scoped to exactly one address family per
@@ -66,5 +65,5 @@ resource "nxip_address" "lb_vip" {
 
 ### Optional
 
-- `api_key` (String, Sensitive) API Key for nxip Control Plane. Can also be set via the NXIP_API_KEY environment variable (used only if this attribute is left unset) - useful for CI/CD pipelines that shouldn't have a real credential written into .tf files at all.
+- `api_key` (String, Sensitive) API Key for nxip Control Plane. Recommended: leave this unset and provide it via the NXIP_API_KEY environment variable instead (used only if this attribute is left unset), so a real credential never ends up written into a .tf file.
 - `url` (String) Optional base URL for API (defaults to https://nxip.dev). Can also be set via the NXIP_URL environment variable.

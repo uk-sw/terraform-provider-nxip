@@ -54,9 +54,9 @@ func (p *NxipProvider) Schema(ctx context.Context, req provider.SchemaRequest, r
 			"durability guarantee. Do not use for production infrastructure yet.",
 		Attributes: map[string]schema.Attribute{
 			"api_key": schema.StringAttribute{
-				Description: "API Key for nxip Control Plane. Can also be set via the NXIP_API_KEY " +
-					"environment variable (used only if this attribute is left unset) - useful for CI/CD " +
-					"pipelines that shouldn't have a real credential written into .tf files at all.",
+				Description: "API Key for nxip Control Plane. Recommended: leave this unset and provide " +
+					"it via the NXIP_API_KEY environment variable instead (used only if this attribute " +
+					"is left unset), so a real credential never ends up written into a .tf file.",
 				Optional:  true,
 				Sensitive: true,
 			},
@@ -76,12 +76,12 @@ func (p *NxipProvider) Configure(ctx context.Context, req provider.ConfigureRequ
 		return
 	}
 
-	// The attribute wins if set; NXIP_API_KEY/NXIP_URL are fallbacks for
-	// CI/CD pipelines that shouldn't have a real credential written into
-	// .tf files at all. Resolved here, once, rather than in every
-	// resource's own Configure - the client is what actually reads these,
-	// so data must carry the final values, not the possibly-empty ones
-	// straight out of the parsed config.
+	// The attribute wins if set; NXIP_API_KEY/NXIP_URL are the recommended
+	// path for everyone, not just CI/CD - it's how a real credential
+	// avoids ever being written into a .tf file at all. Resolved here,
+	// once, rather than in every resource's own Configure - the client is
+	// what actually reads these, so data must carry the final values, not
+	// the possibly-empty ones straight out of the parsed config.
 	if data.APIKey.IsNull() || data.APIKey.ValueString() == "" {
 		if envKey := os.Getenv("NXIP_API_KEY"); envKey != "" {
 			data.APIKey = types.StringValue(envKey)
