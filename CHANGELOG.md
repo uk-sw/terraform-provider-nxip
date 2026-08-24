@@ -2,6 +2,12 @@
 
 All notable changes to this provider are documented here.
 
+## 0.2.0 (2026-08-24)
+
+- **First non-prerelease version.** No code changes from `0.2.0-alpha.3` - this is a status change, not a functional one. Terraform excludes prerelease versions from default resolution, so `terraform init` previously required knowing to find and pin the exact current alpha string; a plain `0.2.0` resolves normally.
+- Dropped the "pre-release, do not use for production infrastructure" language from the provider's schema description and README. The underlying concerns it named have since been addressed: nightly backups for the API's database have been running since 2026-08-12 (the "no data-durability guarantee" line was no longer accurate), and the resource schema has held steady across every `0.2.0-alpha.x` release.
+- Real-world validation before this cut: `terraform import` (pool and subnet), drift detection (a resource deleted outside Terraform recreates cleanly on the next `apply`), destroy ordering on a nested subtree, and two previously-unverified safety guards (replacing an immutable pool or subnet attribute is correctly blocked when it still has children) - all confirmed against the real, published Registry install, not just the API's own test suite.
+
 ## 0.2.0-alpha.3 (2026-08-15)
 
 - The provider's Registry docs page now links to [nxip.dev](https://nxip.dev) (the product and REST API reference) and [nx-ip.com](https://nx-ip.com) (account signup). Added via a `MarkdownDescription` alongside the existing plain-text `Description` - the framework renders the former for documentation tooling and the latter for anything that can't render Markdown (CLI output, the language server).

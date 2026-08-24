@@ -41,17 +41,13 @@ func (p *NxipProvider) Schema(ctx context.Context, req provider.SchemaRequest, r
 		// free of links/formatting on purpose. MarkdownDescription below
 		// is what the Registry's own docs generator actually renders.
 		Description: "IPAM (IP Address Management) for infrastructure-as-code. Manages dynamic, " +
-			"conflict-free IP CIDR subnets across multi-cloud and on-prem environments. " +
-			"PRE-RELEASE: this provider and the nxip API behind it are still being validated with real " +
-			"users. Resource schemas may change, and the Free tier backing this API carries no data-" +
-			"durability guarantee. Do not use for production infrastructure yet.",
+			"conflict-free IP CIDR subnets across multi-cloud and on-prem environments. See nxip.dev " +
+			"for the product itself and the underlying REST API reference, and nx-ip.com to create " +
+			"an account.",
 		MarkdownDescription: "IPAM (IP Address Management) for infrastructure-as-code. Manages dynamic, " +
 			"conflict-free IP CIDR subnets across multi-cloud and on-prem environments. See " +
 			"[nxip.dev](https://nxip.dev) for the product itself and the underlying REST API reference, " +
-			"and [nx-ip.com](https://nx-ip.com) to create an account. " +
-			"PRE-RELEASE: this provider and the nxip API behind it are still being validated with real " +
-			"users. Resource schemas may change, and the Free tier backing this API carries no data-" +
-			"durability guarantee. Do not use for production infrastructure yet.",
+			"and [nx-ip.com](https://nx-ip.com) to create an account.",
 		Attributes: map[string]schema.Attribute{
 			"api_key": schema.StringAttribute{
 				Description: "API Key for nxip Control Plane. Recommended: leave this unset and provide " +

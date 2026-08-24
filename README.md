@@ -2,8 +2,6 @@
 
 Terraform provider for [nxip](https://nxip.dev): IPAM (IP Address Management) built API-first for infrastructure-as-code. Manages dynamic, conflict-free CIDR subnets across multi-cloud and on-prem environments.
 
-**Status: pre-release / early access.** Published under a pre-release version (e.g. `v0.2.0-alpha.3`), which `terraform init` will not resolve to unless pinned to that exact version. This is deliberate, not an oversight. Resource schemas may still change, and the nxip API and this provider are both still being validated with real users. **Do not use for production infrastructure yet.** The Free tier backing the API carries no data-durability guarantee; see [nxip's Terms of Service](https://nx-ip.com/terms).
-
 ## Usage
 
 ```hcl
@@ -11,7 +9,7 @@ terraform {
   required_providers {
     nxip = {
       source  = "uk-sw/nxip"
-      version = "0.2.0-alpha.3" # pin the exact pre-release version while this is still early access
+      version = "~> 0.2" # optional, but recommended - see the Registry page for the latest 0.2.x
     }
   }
 }
