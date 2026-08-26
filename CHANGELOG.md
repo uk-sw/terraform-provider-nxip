@@ -2,6 +2,12 @@
 
 All notable changes to this provider are documented here.
 
+## 0.3.0 (2026-08-26)
+
+- **Republished as `uk-sw/nxip-ipam`, no functional changes.** `0.1.0-alpha14` already tried fixing Terraform Registry/web search visibility for "ipam" by leading the provider description with that word - it didn't move the needle, because the Registry's curated `description` field (title, meta description, search indexing) is only ever populated for official/partner-tier providers, confirmed by checking several high-download community providers with the identical blank field. The one signal that actually correlates with ranking for a generic term like "ipam" is having it in the provider's own name, which every competitor that ranks for that search already does.
+- `uk-sw/nxip` stays published and working, frozen at `0.2.0` - nothing breaks for it, it just gets no further releases.
+- Resource types are unchanged (`nxip_pool`, `nxip_subnet`, `nxip_address`) - the provider's internal type name was never tied to the Registry namespace/name, so existing and new configs only need one line changed: `source = "uk-sw/nxip-ipam"` in `required_providers`, keeping the local block name `nxip` exactly as before.
+
 ## 0.2.0 (2026-08-24)
 
 - **First non-prerelease version.** No code changes from `0.2.0-alpha.3` - this is a status change, not a functional one. Terraform excludes prerelease versions from default resolution, so `terraform init` previously required knowing to find and pin the exact current alpha string; a plain `0.2.0` resolves normally.

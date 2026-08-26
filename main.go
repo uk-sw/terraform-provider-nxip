@@ -6,7 +6,7 @@ import (
 	"log"
 
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
-	"github.com/uk-sw/terraform-provider-nxip/internal/provider"
+	"github.com/uk-sw/terraform-provider-nxip-ipam/internal/provider"
 )
 
 // version is overridden at build time by GoReleaser via
@@ -21,7 +21,7 @@ func main() {
 	flag.Parse()
 
 	opts := providerserver.ServeOpts{
-		Address: "registry.terraform.io/uk-sw/nxip",
+		Address: "registry.terraform.io/uk-sw/nxip-ipam",
 	}
 
 	err := providerserver.Serve(context.Background(), provider.New(version), opts)

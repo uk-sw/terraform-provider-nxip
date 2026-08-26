@@ -1,6 +1,8 @@
-# terraform-provider-nxip
+# terraform-provider-nxip-ipam
 
 Terraform provider for [nxip](https://nxip.dev): IPAM (IP Address Management) built API-first for infrastructure-as-code. Manages dynamic, conflict-free CIDR subnets across multi-cloud and on-prem environments.
+
+> **Registry address changed 2026-08-26**: this provider now publishes as `uk-sw/nxip-ipam`, not `uk-sw/nxip`. The old address is still live and works (frozen at `0.2.0`), but gets no further releases - repoint `source` as shown below. Nothing else changes: resource types are still `nxip_pool`/`nxip_subnet`/`nxip_address`, and the local block name can stay `nxip`.
 
 ## Usage
 
@@ -8,8 +10,8 @@ Terraform provider for [nxip](https://nxip.dev): IPAM (IP Address Management) bu
 terraform {
   required_providers {
     nxip = {
-      source  = "uk-sw/nxip"
-      version = "~> 0.2" # optional, but recommended - see the Registry page for the latest 0.2.x
+      source  = "uk-sw/nxip-ipam"
+      version = "~> 0.3" # optional, but recommended - see the Registry page for the latest 0.3.x
     }
   }
 }

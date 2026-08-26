@@ -1,4 +1,4 @@
-module github.com/uk-sw/terraform-provider-nxip
+module github.com/uk-sw/terraform-provider-nxip-ipam
 
 go 1.26.6
 

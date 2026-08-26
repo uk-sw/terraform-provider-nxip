@@ -1,7 +1,7 @@
 terraform {
   required_providers {
     nxip = {
-      source = "uk-sw/nxip"
+      source = "uk-sw/nxip-ipam"
     }
   }
 }
