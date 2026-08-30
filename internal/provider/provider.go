@@ -92,7 +92,8 @@ func (p *NxipProvider) Configure(ctx context.Context, req provider.ConfigureRequ
 	if data.APIKey.ValueString() == "" {
 		resp.Diagnostics.AddError(
 			"Missing API Key",
-			"Set the api_key attribute in the provider block, or the NXIP_API_KEY environment variable.",
+			"Set the api_key attribute in the provider block, or the NXIP_API_KEY environment variable. "+
+				"If you don't have a key yet, get one for free at https://nx-ip.com/signup.",
 		)
 		return
 	}
