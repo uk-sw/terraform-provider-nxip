@@ -69,6 +69,16 @@ func (r *SubnetResource) Schema(ctx context.Context, req resource.SchemaRequest,
 					"populated automatically after apply rather than needing to be supplied. Subnets are " +
 					"immutable: changing this forces a new resource.",
 				PlanModifiers: []planmodifier.String{
+					// UseStateForUnknown must come first: without it, an
+					// Optional+Computed attribute left unset in config plans
+					// as Unknown on every single apply, not just the first
+					// one, since nothing tells the framework this value is
+					// actually stable once set. RequiresReplace would then
+					// see a spurious known-value -> Unknown transition and
+					// force a replace on any update at all, even one that
+					// never touches this attribute - exactly the bug found
+					// via a real rename-in-place test (see resource_subnet_test.go).
+					stringplanmodifier.UseStateForUnknown(),
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
@@ -79,6 +89,8 @@ func (r *SubnetResource) Schema(ctx context.Context, req resource.SchemaRequest,
 					"set; see environment's description. Subnets are immutable: changing this forces a " +
 					"new resource.",
 				PlanModifiers: []planmodifier.String{
+					// See environment's comment above - same reasoning.
+					stringplanmodifier.UseStateForUnknown(),
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
@@ -111,6 +123,8 @@ func (r *SubnetResource) Schema(ctx context.Context, req resource.SchemaRequest,
 					"populated automatically after apply in that case, not left null. " +
 					"Subnets are immutable: changing this forces a new resource.",
 				PlanModifiers: []planmodifier.String{
+					// See environment's comment above, same reasoning applies here too.
+					stringplanmodifier.UseStateForUnknown(),
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
@@ -126,22 +140,27 @@ func (r *SubnetResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				},
 			},
 			"name": schema.StringAttribute{
-				Optional:    true,
-				Description: "Human-readable name for this subnet (e.g. \"App Team A\"). Subnets are immutable: changing this forces a new resource.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
+				Optional: true,
+				Description: "Human-readable name for this subnet (e.g. \"App Team A\"). Updated in place via " +
+					"PATCH /v1/subnets/:id - unlike every other attribute here, changing this does not force a " +
+					"new resource, since it's purely descriptive and has no bearing on the allocated CIDR.",
 			},
 			"description": schema.StringAttribute{
-				Optional:    true,
-				Description: "Free-text notes for why this subnet exists. Subnets are immutable: changing this forces a new resource.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
+				Optional: true,
+				Description: "Free-text notes for why this subnet exists. Updated in place via " +
+					"PATCH /v1/subnets/:id, same as name - purely descriptive, does not force a new resource.",
 			},
 			"cidr": schema.StringAttribute{
 				Computed:    true,
 				Description: "The allocated non-overlapping CIDR block returned by nxip API (e.g. 10.240.12.0/24).",
+				PlanModifiers: []planmodifier.String{
+					// Same reasoning as "id" above, which already had this -
+					// cidr is exactly as stable once assigned, and was
+					// missing the same protection, which is why it was
+					// showing as spuriously "(known after apply)" on every
+					// plan even when nothing was actually going to change it.
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"metadata": schema.MapAttribute{
 				ElementType: types.StringType,
@@ -150,9 +169,19 @@ func (r *SubnetResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				Description: "Free-form key/value tags for this subnet (e.g. vpc_id, cost_center), not " +
 					"interpreted by nxip, stored and returned as-is. Computed as well as Optional so a config " +
 					"that never sets this reads back as an empty map rather than null, matching what the API " +
-					"returns. Subnets are immutable: changing this forces a new resource.",
+					"returns. Updated in place via PATCH /v1/subnets/:id - a full replace of the whole map, not " +
+					"a merge, same as the API itself, but does not force a new resource.",
 				PlanModifiers: []planmodifier.Map{
-					mapplanmodifier.RequiresReplace(),
+					// Without this, a config that never sets metadata plans
+					// as "(known after apply)" on every single apply, not
+					// just the first, since nothing tells the framework a
+					// value it already knows is stable. Previously masked by
+					// RequiresReplace turning that into an actual replace
+					// either way; now that metadata updates in place, this
+					// would otherwise show as confusing plan noise on every
+					// unrelated change - the exact "empty metadata triggers
+					// spurious replacement" bug already reported.
+					mapplanmodifier.UseStateForUnknown(),
 				},
 			},
 		},
@@ -326,18 +355,56 @@ func (r *SubnetResource) Read(ctx context.Context, req resource.ReadRequest, res
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
+// Update is only ever reached for a change to name, description, and/or
+// metadata - every other attribute (environment, region, family,
+// prefix_length, parent_subnet_id, kind) is still RequiresReplace, since
+// those genuinely are immutable server-side. These three are purely
+// descriptive, and PATCH /v1/subnets/:id already supports updating them
+// in place, so there's no reason to destroy and recreate the resource,
+// and its children, just to fix a typo in a name.
 func (r *SubnetResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	// All user-configurable attributes (environment, region, family,
-	// prefix_length) are marked RequiresReplace in the schema, since
-	// subnets are immutable server-side. Terraform will therefore
-	// destroy and recreate the resource rather than reach this method for
-	// any meaningful change. This is kept only to satisfy the
-	// resource.Resource interface.
 	var plan SubnetResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	payload := map[string]any{}
+	// Same "only include what's actually set" reasoning as Create: an
+	// absent field in the PATCH body means "leave unchanged" server-side,
+	// not "clear this", so omitting a null value here is correct, not
+	// merely convenient.
+	if !plan.Name.IsNull() {
+		payload["name"] = plan.Name.ValueString()
+	}
+	if !plan.Description.IsNull() {
+		payload["description"] = plan.Description.ValueString()
+	}
+	if !plan.Metadata.IsNull() && !plan.Metadata.IsUnknown() {
+		var metadata map[string]string
+		resp.Diagnostics.Append(plan.Metadata.ElementsAs(ctx, &metadata, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		payload["metadata"] = metadata
+	}
+
+	var result subnetResponse
+	status, apiMessage, err := r.client.do(ctx, http.MethodPatch, "/v1/subnets/"+plan.ID.ValueString(), payload, &result)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", err.Error())
+		return
+	}
+	if status != http.StatusOK {
+		resp.Diagnostics.AddError("API Error", apiErrorSummary("failed to update subnet", status, apiMessage))
+		return
+	}
+
+	resp.Diagnostics.Append(applySubnetResponse(ctx, &plan, result)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 

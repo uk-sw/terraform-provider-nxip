@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
 
@@ -94,6 +95,61 @@ resource "nxip_subnet" "test" {
   prefix_length = %d
 }
 `, testAccAPIKey(), testAccAPIURL(), prefixLength)
+}
+
+func testAccSubnetConfigWithName(name string) string {
+	return fmt.Sprintf(`
+provider "nxip" {
+  api_key = %q
+  url     = %q
+}
+
+resource "nxip_subnet" "test" {
+  environment   = "production"
+  region        = "us-east-1"
+  family        = "IPV4"
+  prefix_length = 28
+  name          = %q
+}
+`, testAccAPIKey(), testAccAPIURL(), name)
+}
+
+// TestAccSubnetResource_renameInPlace is the regression test for the fix
+// itself: name (and description/metadata, same code path) must update via
+// PATCH /v1/subnets/:id in place, not force a destroy+recreate the way
+// every other attribute still correctly does. plancheck.ExpectResourceAction
+// asserts this directly against the plan, not just indirectly via the id
+// happening to survive — a replace that coincidentally reallocated the same
+// CIDR would still pass an id/cidr-equality check, but would never pass this.
+func TestAccSubnetResource_renameInPlace(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckSubnetDestroyed,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccSubnetConfigWithName("Before rename"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("nxip_subnet.test", "name", "Before rename"),
+					resource.TestCheckResourceAttrSet("nxip_subnet.test", "id"),
+					resource.TestCheckResourceAttrSet("nxip_subnet.test", "cidr"),
+				),
+			},
+			{
+				Config: testAccSubnetConfigWithName("After rename"),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("nxip_subnet.test", plancheck.ResourceActionUpdate),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("nxip_subnet.test", "name", "After rename"),
+					resource.TestCheckResourceAttrSet("nxip_subnet.test", "id"),
+					resource.TestCheckResourceAttrSet("nxip_subnet.test", "cidr"),
+				),
+			},
+		},
+	})
 }
 
 func TestAccSubnetResource_lifecycle(t *testing.T) {
