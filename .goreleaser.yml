@@ -1,5 +1,17 @@
 version: 2
 
+# Pinned explicitly rather than left to GoReleaser's default (the git repo's
+# own name). The repo was renamed to terraform-provider-nxip-ipam, but the
+# live, working Registry listing is still uk-sw/nxip, which requires every
+# artifact literally named terraform-provider-nxip_<version>_* to match its
+# own address. Without this override, v0.3.0 built under the renamed repo
+# produced terraform-provider-nxip-ipam_* assets instead - real assets, just
+# under a name the uk-sw/nxip listing's Resync could never match, which is
+# what "missing SHA256 checksum for terraform-provider-nxip_0.3.0_manifest.json"
+# actually meant. uk-sw/nxip-ipam itself is still stuck on a separate,
+# already-tracked HashiCorp issue independent of this naming problem.
+project_name: terraform-provider-nxip
+
 before:
   hooks:
     - go mod tidy
