@@ -4,9 +4,11 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/mapplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -30,6 +32,7 @@ type PoolResourceModel struct {
 	Family      types.String `tfsdk:"family"`
 	Environment types.String `tfsdk:"environment"`
 	Region      types.String `tfsdk:"region"`
+	Metadata    types.Map    `tfsdk:"metadata"`
 }
 
 func (r *PoolResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -85,6 +88,28 @@ func (r *PoolResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
+			"metadata": schema.MapAttribute{
+				ElementType: types.StringType,
+				Optional:    true,
+				Computed:    true,
+				Description: "Free-form key/value tags for this pool (e.g. owner, cost_center), not " +
+					"interpreted by nxip, stored and returned as-is. Two keys are read by the nxip GUI: " +
+					"\"latitude\" and \"longitude\" place this pool on the world map, which is how an on-prem " +
+					"site whose region isn't a recognized cloud region gets plotted. Computed as well as " +
+					"Optional so a config that never sets this reads back as an empty map rather than null, " +
+					"matching what the API returns. Updated in place via PATCH /v1/pools/:id - a full replace " +
+					"of the whole map, not a merge, same as the API itself, but does not force a new resource.",
+				PlanModifiers: []planmodifier.Map{
+					// Without this, a config that never sets metadata plans as
+					// "(known after apply)" on every apply, not just the first,
+					// since nothing tells the framework a value it already knows
+					// is stable. On this resource that would be worse than plan
+					// noise: every other attribute here is RequiresReplace, so a
+					// spurious unknown would force a pool to be destroyed and
+					// recreated - taking every subnet in it along with it.
+					mapplanmodifier.UseStateForUnknown(),
+				},
+			},
 		},
 	}
 }
@@ -101,12 +126,34 @@ func (r *PoolResource) Configure(ctx context.Context, req resource.ConfigureRequ
 // "utilization" object; deliberately not mapped here, unknown JSON fields
 // are ignored on decode.
 type poolResponse struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	CIDR        string `json:"cidr"`
-	Family      string `json:"family"`
-	Environment string `json:"environment"`
-	Region      string `json:"region"`
+	ID          string            `json:"id"`
+	Name        string            `json:"name"`
+	CIDR        string            `json:"cidr"`
+	Family      string            `json:"family"`
+	Environment string            `json:"environment"`
+	Region      string            `json:"region"`
+	Metadata    map[string]string `json:"metadata"`
+}
+
+// applyPoolResponse copies API response fields into the resource model,
+// shared by Create, Read, and Update so the three can't drift apart on which
+// fields get synced back into state.
+func applyPoolResponse(ctx context.Context, model *PoolResourceModel, result poolResponse) diag.Diagnostics {
+	model.ID = types.StringValue(result.ID)
+	model.Name = types.StringValue(result.Name)
+	model.CIDR = types.StringValue(result.CIDR)
+	model.Family = types.StringValue(result.Family)
+	model.Environment = types.StringValue(result.Environment)
+	model.Region = types.StringValue(result.Region)
+
+	// Must be set from the response even when the config omitted metadata:
+	// the attribute is Computed, so leaving it unknown after apply is the
+	// "provider produced inconsistent result after apply" error, not an
+	// empty map. MapValueFrom on a nil map yields an empty map, which is
+	// exactly what the API returns for a pool with no metadata.
+	metadataValue, diags := types.MapValueFrom(ctx, types.StringType, result.Metadata)
+	model.Metadata = metadataValue
+	return diags
 }
 
 func (r *PoolResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -123,6 +170,14 @@ func (r *PoolResource) Create(ctx context.Context, req resource.CreateRequest, r
 		"environment": plan.Environment.ValueString(),
 		"region":      plan.Region.ValueString(),
 	}
+	if !plan.Metadata.IsNull() && !plan.Metadata.IsUnknown() {
+		var metadata map[string]string
+		resp.Diagnostics.Append(plan.Metadata.ElementsAs(ctx, &metadata, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		payload["metadata"] = metadata
+	}
 
 	var result poolResponse
 	status, apiMessage, err := r.client.do(ctx, http.MethodPost, "/v1/pools", payload, &result)
@@ -135,7 +190,10 @@ func (r *PoolResource) Create(ctx context.Context, req resource.CreateRequest, r
 		return
 	}
 
-	plan.ID = types.StringValue(result.ID)
+	resp.Diagnostics.Append(applyPoolResponse(ctx, &plan, result)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -165,26 +223,54 @@ func (r *PoolResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		return
 	}
 
-	state.ID = types.StringValue(result.ID)
-	state.Name = types.StringValue(result.Name)
-	state.CIDR = types.StringValue(result.CIDR)
-	state.Family = types.StringValue(result.Family)
-	state.Environment = types.StringValue(result.Environment)
-	state.Region = types.StringValue(result.Region)
+	resp.Diagnostics.Append(applyPoolResponse(ctx, &state, result)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
+// Update is only ever reached for a change to metadata: name, cidr, family,
+// environment and region are all still RequiresReplace, since those genuinely
+// are immutable server-side. metadata alone is patchable via
+// PATCH /v1/pools/:id, so tagging a pool with a latitude/longitude no longer
+// means destroying it, and every subnet inside it, to record where it is.
 func (r *PoolResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	// Every user-configurable attribute is RequiresReplace — there is no
-	// PATCH endpoint for pools server-side. Terraform will destroy and
-	// recreate rather than reach this method for any meaningful change;
-	// kept only to satisfy the resource.Resource interface.
 	var plan PoolResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	// The API requires metadata on this endpoint, so an unset map is sent as
+	// an explicit empty object rather than omitted - which is also the
+	// correct semantics: clearing the block in config means "no tags".
+	metadata := map[string]string{}
+	if !plan.Metadata.IsNull() && !plan.Metadata.IsUnknown() {
+		resp.Diagnostics.Append(plan.Metadata.ElementsAs(ctx, &metadata, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+	payload := map[string]any{"metadata": metadata}
+
+	var result poolResponse
+	status, apiMessage, err := r.client.do(ctx, http.MethodPatch, "/v1/pools/"+plan.ID.ValueString(), payload, &result)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", err.Error())
+		return
+	}
+	if status != http.StatusOK {
+		resp.Diagnostics.AddError("API Error", apiErrorSummary("failed to update pool", status, apiMessage))
+		return
+	}
+
+	resp.Diagnostics.Append(applyPoolResponse(ctx, &plan, result)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
