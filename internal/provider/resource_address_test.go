@@ -7,22 +7,22 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
 
 // testAccCheckAddressDestroyed verifies, via a direct API call bypassing
 // Terraform entirely, that every address created during the test was
-// actually released server-side — not just dropped from state. Unlike
-// pool/subnet, an address's URL is nested under its parent subnet, so the
-// subnet_id has to come along with the address ID to check it.
+// actually released server-side, not just dropped from state. Uses the
+// flat GET /v1/addresses/:id now that it exists, matching how the provider
+// itself reads an address.
 func testAccCheckAddressDestroyed(s *terraform.State) error {
 	for _, rs := range s.RootModule().Resources {
 		if rs.Type != "nxip_address" {
 			continue
 		}
 
-		subnetID := rs.Primary.Attributes["subnet_id"]
-		req, err := http.NewRequest(http.MethodGet, testAccAPIURL()+"/v1/subnets/"+subnetID+"/addresses/"+rs.Primary.ID, nil)
+		req, err := http.NewRequest(http.MethodGet, testAccAPIURL()+"/v1/addresses/"+rs.Primary.ID, nil)
 		if err != nil {
 			return err
 		}
@@ -102,20 +102,12 @@ resource "nxip_address" "test" {
 					resource.TestCheckResourceAttr("nxip_address.test", "metadata.owner", "acc-test"),
 				),
 			},
-			// 2. Import by the composite subnet_id/address_id identifier and
-			// verify the imported state matches exactly (exercises the
-			// custom ImportState + Read).
+			// 2. Import by the address's own ID alone and verify the
+			// imported state matches exactly (exercises ImportState + Read).
 			{
 				ResourceName:      "nxip_address.test",
 				ImportState:       true,
 				ImportStateVerify: true,
-				ImportStateIdFunc: func(s *terraform.State) (string, error) {
-					rs, ok := s.RootModule().Resources["nxip_address.test"]
-					if !ok {
-						return "", fmt.Errorf("resource not found in state: nxip_address.test")
-					}
-					return rs.Primary.Attributes["subnet_id"] + "/" + rs.Primary.ID, nil
-				},
 			},
 			// Final step's implicit destroy at test teardown exercises
 			// Delete, and CheckDestroy above confirms it actually released
@@ -188,8 +180,7 @@ func deleteAddressOutOfBand(resourceName string) resource.TestCheckFunc {
 			return fmt.Errorf("resource not found in state: %s", resourceName)
 		}
 
-		subnetID := rs.Primary.Attributes["subnet_id"]
-		req, err := http.NewRequest(http.MethodDelete, testAccAPIURL()+"/v1/subnets/"+subnetID+"/addresses/"+rs.Primary.ID, nil)
+		req, err := http.NewRequest(http.MethodDelete, testAccAPIURL()+"/v1/addresses/"+rs.Primary.ID, nil)
 		if err != nil {
 			return err
 		}
@@ -206,4 +197,141 @@ func deleteAddressOutOfBand(resourceName string) resource.TestCheckFunc {
 		}
 		return nil
 	}
+}
+
+func testAccAddressConfigWithMetadata(region, owner string) string {
+	return fmt.Sprintf(`
+provider "nxip" {
+  api_key = %q
+  url     = %q
+}
+
+resource "nxip_pool" "test" {
+  name        = "Address Metadata Test Pool"
+  cidr        = "10.96.0.0/16"
+  family      = "IPV4"
+  environment = "production"
+  region      = %q
+}
+
+resource "nxip_subnet" "test" {
+  environment   = nxip_pool.test.environment
+  region        = nxip_pool.test.region
+  family        = nxip_pool.test.family
+  prefix_length = 24
+}
+
+resource "nxip_address" "test" {
+  subnet_id = nxip_subnet.test.id
+  address   = "${cidrhost(nxip_subnet.test.cidr, 10)}"
+
+  metadata = {
+    owner = %q
+  }
+}
+`, testAccAPIKey(), testAccAPIURL(), region, owner)
+}
+
+// TestAccAddressResource_metadataUpdateInPlace is the regression test for
+// the one address attribute that is not RequiresReplace. Changing metadata
+// must PATCH the address, not release it and register a new one at the
+// same IP - a recreate would briefly free the address for something else to
+// claim, which is exactly the kind of gap this fix closes.
+//
+// plancheck.ExpectResourceAction asserts the plan's actual action rather
+// than inferring it from the id surviving: a replace that happened to land
+// on the same address would still pass a naive id check, but not this one.
+func TestAccAddressResource_metadataUpdateInPlace(t *testing.T) {
+	region := fmt.Sprintf("acc-test-address-metadata-%d", time.Now().UnixNano())
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy: resource.ComposeAggregateTestCheckFunc(
+			testAccCheckPoolDestroyed,
+			testAccCheckSubnetDestroyed,
+			testAccCheckAddressDestroyed,
+		),
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAddressConfigWithMetadata(region, "platform-team"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("nxip_address.test", "metadata.owner", "platform-team"),
+					resource.TestCheckResourceAttrSet("nxip_address.test", "id"),
+				),
+			},
+			{
+				Config: testAccAddressConfigWithMetadata(region, "data-team"),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("nxip_address.test", plancheck.ResourceActionUpdate),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("nxip_address.test", "metadata.owner", "data-team"),
+					resource.TestCheckResourceAttrSet("nxip_address.test", "id"),
+				),
+			},
+		},
+	})
+}
+
+// TestAccAddressResource_noMetadataIsStable covers the other half of the
+// UseStateForUnknown fix: a config that never mentions metadata at all must
+// still plan clean on a second apply. Without the plan modifier the
+// attribute re-plans as "(known after apply)" every time, and because every
+// other attribute on this resource is still RequiresReplace, that alone
+// would force the address to be released and re-registered on any
+// unrelated change.
+func TestAccAddressResource_noMetadataIsStable(t *testing.T) {
+	region := fmt.Sprintf("acc-test-address-nometadata-%d", time.Now().UnixNano())
+	config := fmt.Sprintf(`
+provider "nxip" {
+  api_key = %q
+  url     = %q
+}
+
+resource "nxip_pool" "test" {
+  name        = "Address No-Metadata Test Pool"
+  cidr        = "10.97.0.0/16"
+  family      = "IPV4"
+  environment = "production"
+  region      = %q
+}
+
+resource "nxip_subnet" "test" {
+  environment   = nxip_pool.test.environment
+  region        = nxip_pool.test.region
+  family        = nxip_pool.test.family
+  prefix_length = 24
+}
+
+resource "nxip_address" "test" {
+  subnet_id = nxip_subnet.test.id
+  address   = "${cidrhost(nxip_subnet.test.cidr, 10)}"
+}
+`, testAccAPIKey(), testAccAPIURL(), region)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy: resource.ComposeAggregateTestCheckFunc(
+			testAccCheckPoolDestroyed,
+			testAccCheckSubnetDestroyed,
+			testAccCheckAddressDestroyed,
+		),
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("nxip_address.test", "metadata.%", "0"),
+					resource.TestCheckResourceAttrSet("nxip_address.test", "id"),
+				),
+			},
+			{
+				Config:   config,
+				PlanOnly: true,
+			},
+		},
+	})
 }

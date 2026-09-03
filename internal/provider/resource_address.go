@@ -2,9 +2,7 @@ package provider
 
 import (
 	"context"
-	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -82,6 +80,17 @@ func (r *AddressResource) Schema(ctx context.Context, req resource.SchemaRequest
 				Description: "\"ACTIVE\" (in use) or \"RESERVED\" (held but not yet in use). Defaults to " +
 					"\"ACTIVE\" server-side if omitted. Immutable: changing this forces a new resource.",
 				PlanModifiers: []planmodifier.String{
+					// UseStateForUnknown as well as RequiresReplace, not one or
+					// the other. Optional+Computed with no UseStateForUnknown
+					// re-plans as unknown on every apply that leaves status
+					// unset in config, not just the first - which, combined
+					// with RequiresReplace, forces a destroy+recreate on any
+					// unrelated change at all. Invisible until metadata above
+					// stopped force-replacing, since every attribute on this
+					// resource used to force replace anyway - the same bug
+					// already found and fixed on nxip_subnet's
+					// environment/region/parent_subnet_id this week.
+					stringplanmodifier.UseStateForUnknown(),
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
@@ -98,9 +107,19 @@ func (r *AddressResource) Schema(ctx context.Context, req resource.SchemaRequest
 				Computed:    true,
 				Description: "Free-form key/value tags for this address (e.g. owner, asset_tag), not " +
 					"interpreted by nxip, stored and returned as-is. Computed as well as Optional so a config " +
-					"that never sets this reads back as an empty map rather than null. Immutable: changing this forces a new resource.",
+					"that never sets this reads back as an empty map rather than null, matching what the API " +
+					"returns. Updated in place via PATCH /v1/addresses/:id - a full replace of the whole map, " +
+					"not a merge, same as the API itself, but does not force a new resource.",
 				PlanModifiers: []planmodifier.Map{
-					mapplanmodifier.RequiresReplace(),
+					// Without this, a config that never sets metadata plans as
+					// "(known after apply)" on every apply, not just the first,
+					// since nothing tells the framework a value it already
+					// knows is stable. On this resource that would be worse
+					// than plan noise: every other attribute here is still
+					// RequiresReplace, so a spurious unknown would force a
+					// destroy and recreate on any unrelated change - the same
+					// bug already found and fixed on nxip_subnet and nxip_pool.
+					mapplanmodifier.UseStateForUnknown(),
 				},
 			},
 		},
@@ -201,7 +220,7 @@ func (r *AddressResource) Read(ctx context.Context, req resource.ReadRequest, re
 	}
 
 	var result addressResponse
-	status, apiMessage, err := r.client.do(ctx, http.MethodGet, "/v1/subnets/"+state.SubnetID.ValueString()+"/addresses/"+state.ID.ValueString(), nil, &result)
+	status, apiMessage, err := r.client.do(ctx, http.MethodGet, "/v1/addresses/"+state.ID.ValueString(), nil, &result)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", err.Error())
 		return
@@ -227,16 +246,45 @@ func (r *AddressResource) Read(ctx context.Context, req resource.ReadRequest, re
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
+// Update is only ever reached for a change to metadata - every other
+// attribute (subnet_id, address, family, status, hostname) is still
+// RequiresReplace, since those genuinely are immutable server-side.
+// metadata alone is patchable via PATCH /v1/addresses/:id, so tagging an
+// address with an owner or an asset tag no longer means releasing it and
+// registering a new one at the same IP.
 func (r *AddressResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	// Every attribute is RequiresReplace - there is no PATCH endpoint for
-	// addresses server-side. Terraform will destroy and recreate rather
-	// than reach this method for any meaningful change; kept only to
-	// satisfy the resource.Resource interface.
 	var plan AddressResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	payload := map[string]any{}
+	if !plan.Metadata.IsNull() && !plan.Metadata.IsUnknown() {
+		var metadata map[string]string
+		resp.Diagnostics.Append(plan.Metadata.ElementsAs(ctx, &metadata, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		payload["metadata"] = metadata
+	}
+
+	var result addressResponse
+	status, apiMessage, err := r.client.do(ctx, http.MethodPatch, "/v1/addresses/"+plan.ID.ValueString(), payload, &result)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", err.Error())
+		return
+	}
+	if status != http.StatusOK {
+		resp.Diagnostics.AddError("API Error", apiErrorSummary("failed to update address", status, apiMessage))
+		return
+	}
+
+	resp.Diagnostics.Append(applyAddressResponse(ctx, &plan, result)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -247,7 +295,7 @@ func (r *AddressResource) Delete(ctx context.Context, req resource.DeleteRequest
 		return
 	}
 
-	status, apiMessage, err := r.client.do(ctx, http.MethodDelete, "/v1/subnets/"+state.SubnetID.ValueString()+"/addresses/"+state.ID.ValueString(), nil, nil)
+	status, apiMessage, err := r.client.do(ctx, http.MethodDelete, "/v1/addresses/"+state.ID.ValueString(), nil, nil)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", err.Error())
 		return
@@ -265,23 +313,14 @@ func (r *AddressResource) Delete(ctx context.Context, req resource.DeleteRequest
 // ImportState allows an existing address (registered outside Terraform, or
 // from a previous state file) to be brought under management with:
 //
-//	terraform import nxip_address.example <subnet-id>/<address-id>
+//	terraform import nxip_address.example <address-id>
 //
-// Unlike nxip_pool/nxip_subnet, this needs a composite identifier - the
-// address's own ID alone isn't enough to fetch it, since its URL is nested
-// under its parent subnet (GET /v1/subnets/:id/addresses/:addressId). Read
-// (invoked automatically by the framework after ImportState) populates the
-// remaining attributes from the API.
+// Same single-ID form as nxip_pool/nxip_subnet, now that GET/PATCH/DELETE
+// /v1/addresses/:id exist - previously this needed a composite
+// <subnet-id>/<address-id> identifier, since the address's own ID alone
+// wasn't enough to fetch it while its only route was nested under its
+// parent subnet. Read (invoked automatically by the framework after
+// ImportState) populates subnet_id and every other attribute from the API.
 func (r *AddressResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	parts := strings.SplitN(req.ID, "/", 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		resp.Diagnostics.AddError(
-			"Unexpected Import Identifier",
-			fmt.Sprintf("Expected import identifier in the form <subnet_id>/<address_id>, got: %q", req.ID),
-		)
-		return
-	}
-
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("subnet_id"), parts[0])...)
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), parts[1])...)
+	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }

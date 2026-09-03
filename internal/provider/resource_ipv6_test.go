@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
-	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
 
 // TestAccIPv6_lifecycle proves the whole resource set (nxip_pool,
@@ -109,20 +108,13 @@ resource "nxip_address" "test" {
 				),
 			},
 			// Import round-trip for the IPv6 address specifically — the
-			// composite <subnet_id>/<address_id> identifier and the
-			// shorthand-vs-expanded-form normalization are both things
-			// that could plausibly behave differently for IPv6 than IPv4.
+			// address's own ID alone, and the shorthand-vs-expanded-form
+			// normalization, are both things that could plausibly behave
+			// differently for IPv6 than IPv4.
 			{
 				ResourceName:      "nxip_address.test",
 				ImportState:       true,
 				ImportStateVerify: true,
-				ImportStateIdFunc: func(s *terraform.State) (string, error) {
-					rs, ok := s.RootModule().Resources["nxip_address.test"]
-					if !ok {
-						return "", fmt.Errorf("resource not found in state: nxip_address.test")
-					}
-					return rs.Primary.Attributes["subnet_id"] + "/" + rs.Primary.ID, nil
-				},
 			},
 		},
 	})

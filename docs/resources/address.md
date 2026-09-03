@@ -18,6 +18,14 @@ resource "nxip_address" "lb_vip" {
   address   = "10.0.0.10"
   status    = "RESERVED"
   hostname  = "lb-01"
+
+  # Editable after creation, unlike every other attribute here - see the
+  # metadata attribute's own description. Adding an owner or re-tagging an
+  # asset later updates this address in place, it does not release and
+  # re-register it at the same IP.
+  metadata = {
+    owner = "platform-team"
+  }
 }
 ```
 
@@ -32,7 +40,7 @@ resource "nxip_address" "lb_vip" {
 ### Optional
 
 - `hostname` (String) Human-readable hostname for whatever holds this address (e.g. "web-01"). Immutable: changing this forces a new resource.
-- `metadata` (Map of String) Free-form key/value tags for this address (e.g. owner, asset_tag), not interpreted by nxip, stored and returned as-is. Computed as well as Optional so a config that never sets this reads back as an empty map rather than null. Immutable: changing this forces a new resource.
+- `metadata` (Map of String) Free-form key/value tags for this address (e.g. owner, asset_tag), not interpreted by nxip, stored and returned as-is. Computed as well as Optional so a config that never sets this reads back as an empty map rather than null, matching what the API returns. Updated in place via PATCH /v1/addresses/:id - a full replace of the whole map, not a merge, same as the API itself, but does not force a new resource.
 - `status` (String) "ACTIVE" (in use) or "RESERVED" (held but not yet in use). Defaults to "ACTIVE" server-side if omitted. Immutable: changing this forces a new resource.
 
 ### Read-Only
@@ -47,5 +55,5 @@ Import is supported using the following syntax:
 The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
 
 ```shell
-terraform import nxip_address.lb_vip <subnet-id>/<address-id>
+terraform import nxip_address.lb_vip <address-id>
 ```
