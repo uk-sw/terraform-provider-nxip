@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/resourcevalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -104,9 +105,18 @@ func (r *SubnetResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				},
 			},
 			"prefix_length": schema.Int64Attribute{
-				Required:    true,
-				Description: "Desired CIDR prefix size (e.g. 24 for a /24 IPv4 subnet, or 64 for a /64 IPv6 subnet). Subnets are immutable: changing this forces a new resource.",
+				Optional: true,
+				// Computed as well as Optional now that cidr can be supplied
+				// instead: a cidr-only config never sets this, but the API
+				// still returns it, and a provider writing a value the config
+				// left null is "inconsistent result after apply" unless the
+				// attribute is Computed.
+				Computed: true,
+				Description: "Desired CIDR prefix size (e.g. 24 for a /24 IPv4 subnet, or 64 for a /64 IPv6 subnet), letting nxip " +
+					"pick the next free block of that size. Exactly one of prefix_length or cidr is required. When cidr " +
+					"is given instead, this reads back the size of that block. Changing this forces a new resource.",
 				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.UseStateForUnknown(),
 					int64planmodifier.RequiresReplace(),
 				},
 			},
@@ -151,15 +161,23 @@ func (r *SubnetResource) Schema(ctx context.Context, req resource.SchemaRequest,
 					"PATCH /v1/subnets/:id, same as name - purely descriptive, does not force a new resource.",
 			},
 			"cidr": schema.StringAttribute{
-				Computed:    true,
-				Description: "The allocated non-overlapping CIDR block returned by nxip API (e.g. 10.240.12.0/24).",
+				Optional: true,
+				Computed: true,
+				Description: "Register this exact block instead of letting nxip choose one (e.g. 10.240.12.0/24). " +
+					"Exactly one of cidr or prefix_length is required. Setting it makes the subnet's address " +
+					"stable across a destroy and recreate, which auto-allocation cannot guarantee: an " +
+					"auto-resolved block is the next one free at the time, so rebuilding in a different order " +
+					"reassigns it. Pin the CIDR for anything referenced by firewall rules, route tables or DNS. " +
+					"Left unset, this reads back whichever block nxip allocated. Changing it forces a new " +
+					"resource, since a subnet's address cannot be moved in place.",
 				PlanModifiers: []planmodifier.String{
-					// Same reasoning as "id" above, which already had this -
-					// cidr is exactly as stable once assigned, and was
-					// missing the same protection, which is why it was
-					// showing as spuriously "(known after apply)" on every
-					// plan even when nothing was actually going to change it.
+					// UseStateForUnknown keeps a config that never sets cidr
+					// from re-planning it as "(known after apply)" on every
+					// apply, which combined with RequiresReplace below would
+					// destroy and recreate the subnet on any unrelated change
+					// - the same trap parent_subnet_id had.
 					stringplanmodifier.UseStateForUnknown(),
+					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"metadata": schema.MapAttribute{
@@ -185,6 +203,20 @@ func (r *SubnetResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				},
 			},
 		},
+	}
+}
+
+// ConfigValidators enforces the API's own "exactly one of cidr or
+// prefixLength" rule during plan rather than leaving it to an error at
+// apply. Terraform has a built-in validator for precisely this shape, so it
+// produces the standard message practitioners already recognize instead of a
+// bespoke one.
+func (r *SubnetResource) ConfigValidators(ctx context.Context) []resource.ConfigValidator {
+	return []resource.ConfigValidator{
+		resourcevalidator.ExactlyOneOf(
+			path.MatchRoot("cidr"),
+			path.MatchRoot("prefix_length"),
+		),
 	}
 }
 
@@ -263,8 +295,15 @@ func (r *SubnetResource) Create(ctx context.Context, req resource.CreateRequest,
 	}
 
 	payload := map[string]any{
-		"family":       plan.Family.ValueString(),
-		"prefixLength": plan.PrefixLength.ValueInt64(),
+		"family": plan.Family.ValueString(),
+	}
+	// Exactly one of these reaches the API, mirroring its own rule. cidr is
+	// Optional+Computed, so an unset one is *unknown* rather than null until
+	// the response fills it in - sending it then would post an empty string.
+	if !plan.CIDR.IsNull() && !plan.CIDR.IsUnknown() {
+		payload["cidr"] = plan.CIDR.ValueString()
+	} else if !plan.PrefixLength.IsNull() && !plan.PrefixLength.IsUnknown() {
+		payload["prefixLength"] = plan.PrefixLength.ValueInt64()
 	}
 	// Optional fields are only included when actually known and set —
 	// "not provided" must reach the API as an absent field (routes/auto-

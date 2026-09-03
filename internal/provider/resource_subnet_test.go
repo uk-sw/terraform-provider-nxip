@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"regexp"
 	"testing"
 	"time"
 
@@ -332,4 +333,121 @@ func deleteSubnetOutOfBand(resourceName string) resource.TestCheckFunc {
 		}
 		return nil
 	}
+}
+
+func testAccSubnetConfigExplicitCIDR(cidr string) string {
+	return fmt.Sprintf(`
+provider "nxip" {
+  api_key = %q
+  url     = %q
+}
+
+resource "nxip_pool" "pinned" {
+  name        = "Explicit CIDR Test Pool"
+  cidr        = "10.234.0.0/16"
+  family      = "IPV4"
+  environment = "production"
+  region      = "acc-test-explicit-cidr"
+}
+
+resource "nxip_subnet" "pinned" {
+  environment = nxip_pool.pinned.environment
+  region      = nxip_pool.pinned.region
+  family      = "IPV4"
+  cidr        = %q
+}
+`, testAccAPIKey(), testAccAPIURL(), cidr)
+}
+
+// TestAccSubnetResource_explicitCIDR covers issue #5's actual need: a subnet
+// whose address is referenced by firewall rules or route tables has to keep
+// that address, and auto-allocation cannot promise it - an auto-resolved
+// block is whichever was free at the time, so a rebuild in a different order
+// reassigns it. Declaring the CIDR is what makes it stable.
+func TestAccSubnetResource_explicitCIDR(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy: resource.ComposeAggregateTestCheckFunc(
+			testAccCheckSubnetDestroyed,
+			testAccCheckPoolDestroyed,
+		),
+		Steps: []resource.TestStep{
+			{
+				Config: testAccSubnetConfigExplicitCIDR("10.234.7.0/24"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					// The exact block asked for, not the next one free.
+					resource.TestCheckResourceAttr("nxip_subnet.pinned", "cidr", "10.234.7.0/24"),
+					resource.TestCheckResourceAttrSet("nxip_subnet.pinned", "id"),
+				),
+			},
+			{
+				// Re-planning an unchanged pinned subnet must be empty. If
+				// cidr re-planned as unknown it would force a replace, which
+				// is the exact failure this is meant to prevent.
+				Config:   testAccSubnetConfigExplicitCIDR("10.234.7.0/24"),
+				PlanOnly: true,
+			},
+			{
+				// Changing a pinned CIDR is a genuine replace: a subnet's
+				// address cannot be moved in place.
+				Config: testAccSubnetConfigExplicitCIDR("10.234.9.0/24"),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("nxip_subnet.pinned", plancheck.ResourceActionDestroyBeforeCreate),
+					},
+				},
+				Check: resource.TestCheckResourceAttr("nxip_subnet.pinned", "cidr", "10.234.9.0/24"),
+			},
+		},
+	})
+}
+
+// TestAccSubnetResource_cidrAndPrefixLengthConflict proves the rule is caught
+// during plan rather than surfacing as an API error at apply.
+func TestAccSubnetResource_cidrAndPrefixLengthConflict(t *testing.T) {
+	both := fmt.Sprintf(`
+provider "nxip" {
+  api_key = %q
+  url     = %q
+}
+
+resource "nxip_subnet" "conflict" {
+  environment   = "production"
+  region        = "acc-test-conflict"
+  family        = "IPV4"
+  cidr          = "10.235.0.0/24"
+  prefix_length = 24
+}
+`, testAccAPIKey(), testAccAPIURL())
+
+	neither := fmt.Sprintf(`
+provider "nxip" {
+  api_key = %q
+  url     = %q
+}
+
+resource "nxip_subnet" "conflict" {
+  environment = "production"
+  region      = "acc-test-conflict"
+  family      = "IPV4"
+}
+`, testAccAPIKey(), testAccAPIURL())
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:      both,
+				ExpectError: regexp.MustCompile(`(?s)Invalid Attribute Combination`),
+				PlanOnly:    true,
+			},
+			{
+				Config:      neither,
+				ExpectError: regexp.MustCompile(`(?s)Missing Attribute Configuration|Invalid Attribute Combination`),
+				PlanOnly:    true,
+			},
+		},
+	})
 }
