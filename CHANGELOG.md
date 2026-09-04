@@ -2,7 +2,7 @@
 
 All notable changes to this provider are documented here.
 
-## Unreleased
+## 0.6.1 (2026-09-04)
 
 - **Docs corrected back to `uk-sw/nxip`. The `uk-sw/nxip-ipam` republish described below never actually landed.** Verified against the Registry API on 2026-09-03: `uk-sw/nxip-ipam` exists but has **zero** published versions and 404s on download, while `uk-sw/nxip` has continued receiving every release since (`0.3.1`, `0.4.0`, `0.5.0`, `0.6.0`, all resolvable). The README, `docs/index.md`, and `examples/provider/provider.tf` had all been repointed at the new address ahead of a publish that never succeeded, so anyone following the documented `source` got a failing `terraform init` on their very first command. All three now point at `uk-sw/nxip`, which is the address that actually works.
 - The 0.3.0 entry below is left exactly as written, since it accurately records what was intended and announced at the time. It just is not what the Registry ended up reflecting.
