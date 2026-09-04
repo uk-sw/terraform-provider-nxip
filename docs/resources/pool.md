@@ -45,7 +45,7 @@ resource "nxip_pool" "manchester_dc" {
 
 ### Required
 
-- `cidr` (String) The pool's own CIDR block (e.g. 10.240.0.0/16). Must be a valid block for the declared family. Immutable: changing this forces a new resource.
+- `cidr` (String) The pool's own CIDR block (e.g. 10.240.0.0/16). Must be a valid block for the declared family. Updated in place: the API accepts a resize provided every subnet already carved from the pool still fits inside the new block, and the new block does not overlap another pool. A resize that would strand a subnet is rejected with an error rather than applied.
 - `environment` (String) Target environment (e.g. production, staging). Immutable: changing this forces a new resource.
 - `family` (String) Address family: "IPV4" or "IPV6". Validated server-side; an invalid value, or a cidr that doesn't match, returns an API error. Immutable: changing this forces a new resource.
 - `name` (String) Human-readable name for the pool.

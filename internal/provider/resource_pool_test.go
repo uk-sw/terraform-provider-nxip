@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
@@ -141,6 +142,63 @@ resource "nxip_pool" "test" {
 // plancheck.ExpectResourceAction asserts the plan's actual action rather than
 // inferring it from the id surviving: a replace that happened to land on the
 // same values would still pass a naive id check, but not this one.
+func testAccPoolConfigWithCIDR(region, cidr string) string {
+	return fmt.Sprintf(`
+provider "nxip" {
+  api_key = %q
+  url     = %q
+}
+
+resource "nxip_pool" "resize" {
+  name        = "Resize Test Pool"
+  cidr        = %q
+  family      = "IPV4"
+  environment = "production"
+  region      = %q
+}
+`, testAccAPIKey(), testAccAPIURL(), cidr, region)
+}
+
+// Shrinking a pool has to be an in-place update, not a replace. It used to
+// be RequiresReplace, which meant any CIDR change tried to destroy the pool
+// first, and a pool holding subnets cannot be destroyed: the apply failed
+// with no way forward. Since pools may not overlap, resizing is the only
+// way to free space for a neighbouring region, so this path has to work.
+//
+// ExpectResourceAction asserts the plan's actual action rather than
+// inferring it from the id surviving, which a replace landing on the same
+// values would also satisfy.
+func TestAccPoolResource_cidrResizesInPlace(t *testing.T) {
+	region := fmt.Sprintf("acc-test-resize-%d", time.Now().UnixNano())
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckPoolDestroyed,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccPoolConfigWithCIDR(region, "10.168.0.0/16"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("nxip_pool.resize", "cidr", "10.168.0.0/16"),
+					resource.TestCheckResourceAttrSet("nxip_pool.resize", "id"),
+				),
+			},
+			{
+				Config: testAccPoolConfigWithCIDR(region, "10.168.0.0/20"),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("nxip_pool.resize", plancheck.ResourceActionUpdate),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("nxip_pool.resize", "cidr", "10.168.0.0/20"),
+					resource.TestCheckResourceAttrSet("nxip_pool.resize", "id"),
+				),
+			},
+		},
+	})
+}
+
 func TestAccPoolResource_metadataUpdateInPlace(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },

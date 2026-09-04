@@ -61,11 +61,16 @@ func (r *PoolResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				},
 			},
 			"cidr": schema.StringAttribute{
-				Required:    true,
-				Description: "The pool's own CIDR block (e.g. 10.240.0.0/16). Must be a valid block for the declared family. Immutable: changing this forces a new resource.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
+				Required: true,
+				Description: "The pool's own CIDR block (e.g. 10.240.0.0/16). Must be a valid block for the declared family. " +
+					"Updated in place: the API accepts a resize provided every subnet already carved from the pool still fits " +
+					"inside the new block, and the new block does not overlap another pool. A resize that would strand a subnet " +
+					"is rejected with an error rather than applied.",
+				// Deliberately no RequiresReplace. It used to have one, which
+				// made any CIDR change a destroy-and-create, and a pool
+				// holding subnets cannot be destroyed: the apply failed and
+				// left no way forward. Resizing is now a real API operation,
+				// so this is an ordinary in-place update.
 			},
 			"family": schema.StringAttribute{
 				Required:    true,
@@ -253,7 +258,10 @@ func (r *PoolResource) Update(ctx context.Context, req resource.UpdateRequest, r
 			return
 		}
 	}
-	payload := map[string]any{"metadata": metadata}
+	// cidr travels with metadata now that pools can be resized. Sent
+	// unconditionally: it is Required, so the plan always carries a value,
+	// and the API treats an unchanged cidr as a no-op.
+	payload := map[string]any{"metadata": metadata, "cidr": plan.CIDR.ValueString()}
 
 	var result poolResponse
 	status, apiMessage, err := r.client.do(ctx, http.MethodPatch, "/v1/pools/"+plan.ID.ValueString(), payload, &result)
