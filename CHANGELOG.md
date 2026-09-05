@@ -2,6 +2,11 @@
 
 All notable changes to this provider are documented here.
 
+## 0.6.2 (2026-09-05)
+
+- **A pool's `cidr` can now be resized in place rather than forcing a destroy and recreate.** Growing or shrinking a pool previously planned as a replacement, which on a pool with subnets under it is not something anyone can safely apply. It now plans and applies as an Update, guarded server-side: the new CIDR must still contain every subnet at any depth, and must not overlap another pool. `10.168.0.0/16` shrinking to a `/20` plans as Update.
+- **The Registry discoverability question is closed, and the answer is that it cannot work.** The 0.6.1 entry below left it open as "still worth doing". It is not. Registry provider search matches the name exactly: `filter[name]=ipam` returns only providers literally named `ipam`, `filter[name]=nxi` returns nothing at all, and the free-text `q` parameter is ignored. No description, keyword or listing copy can surface `uk-sw/nxip` for a search of "ipam", and `uk-sw/nxip-ipam` would have failed the same exact match even if it had published. The repo has been renamed back to `terraform-provider-nxip` so the repo name, the pinned GoReleaser `project_name` and the live `uk-sw/nxip` listing all agree again.
+
 ## 0.6.1 (2026-09-04)
 
 - **Docs corrected back to `uk-sw/nxip`. The `uk-sw/nxip-ipam` republish described below never actually landed.** Verified against the Registry API on 2026-09-03: `uk-sw/nxip-ipam` exists but has **zero** published versions and 404s on download, while `uk-sw/nxip` has continued receiving every release since (`0.3.1`, `0.4.0`, `0.5.0`, `0.6.0`, all resolvable). The README, `docs/index.md`, and `examples/provider/provider.tf` had all been repointed at the new address ahead of a publish that never succeeded, so anyone following the documented `source` got a failing `terraform init` on their very first command. All three now point at `uk-sw/nxip`, which is the address that actually works.
