@@ -21,9 +21,10 @@ import (
 // finding and fixing the same mistake in six separate places. One client,
 // fixed once, used everywhere, can't drift out of sync with itself again.
 type nxipClient struct {
-	baseURL string
-	apiKey  string
-	http    *http.Client
+	baseURL      string
+	apiKey       string
+	organization string
+	http         *http.Client
 }
 
 func newNxipClient(data *NxipProviderModel) *nxipClient {
@@ -32,15 +33,36 @@ func newNxipClient(data *NxipProviderModel) *nxipClient {
 		baseURL = data.URL.ValueString()
 	}
 	apiKey := ""
+	organization := ""
 	if data != nil {
 		apiKey = data.APIKey.ValueString()
+		organization = data.Organization.ValueString()
 	}
 	return &nxipClient{
-		baseURL: baseURL,
-		apiKey:  apiKey,
-		http:    &http.Client{Timeout: 10 * time.Second},
+		baseURL:      baseURL,
+		apiKey:       apiKey,
+		organization: organization,
+		http:         &http.Client{Timeout: 10 * time.Second},
 	}
 }
+
+// organizationHeader is the header a provider's key uses to name the one
+// customer organization a request acts on. Set by the `organization`
+// provider attribute (or NXIP_ORGANIZATION); see
+// docs/specs/msp-tenancy-phase2.md Part B and
+// apps/api/src/middleware/auth.ts (ACTING_ON_BEHALF_HEADER) in
+// net-saas-monorepo.
+const organizationHeader = "x-nxip-organization"
+
+// organizationNotFoundAPIMessage is the API's own fixed error text (see
+// ORGANIZATION_NOT_FOUND_BODY in net-saas-monorepo's
+// apps/api/src/middleware/auth.ts) when x-nxip-organization names an
+// organization that is not this key's own, and is not one of its
+// customers, or the link between them has ended. It is always exactly this
+// string, which is what makes it safe to match on: a resource's own
+// "not found" message (a missing pool, subnet or address) is worded
+// differently, so this match only ever fires for the organization case.
+const organizationNotFoundAPIMessage = "Organization not found."
 
 // do sends a request to `path` (e.g. "/v1/pools/abc123") with an optional
 // JSON body, decodes a JSON response into `out` (if non-nil and the body is
@@ -74,6 +96,13 @@ func (c *nxipClient) do(ctx context.Context, method, path string, body any, out 
 		return 0, "", fmt.Errorf("failed to create request: %w", err)
 	}
 	httpReq.Header.Set("x-api-key", c.apiKey)
+	// Sent only when organization is actually set: an empty header would
+	// still be a present header, and the API only treats the header as
+	// absent when the client sends none at all (see resolveActingOnBehalf
+	// in net-saas-monorepo's apps/api/src/middleware/auth.ts).
+	if c.organization != "" {
+		httpReq.Header.Set(organizationHeader, c.organization)
+	}
 	if body != nil {
 		httpReq.Header.Set("Content-Type", "application/json")
 	}
@@ -115,6 +144,21 @@ func (c *nxipClient) do(ctx context.Context, method, path string, body any, out 
 		}
 	}
 
+	// Rewrite the API's generic "Organization not found." into a message
+	// that names the `organization` attribute, so whichever resource is
+	// about to build a diagnostic out of apiMessage doesn't have to know
+	// anything about organizations to produce a clear one. Only rewritten
+	// when this client actually sent the header - without it, the API
+	// cannot produce this exact message for this reason, so there is
+	// nothing to translate.
+	if c.organization != "" && apiMessage == organizationNotFoundAPIMessage {
+		apiMessage = fmt.Sprintf(
+			"the `organization` attribute (%q) is not this API key's own organization and is not "+
+				"one of its customers, or the link between them has ended",
+			c.organization,
+		)
+	}
+
 	if out != nil && len(respBody) > 0 {
 		if err := json.Unmarshal(respBody, out); err != nil {
 			return httpResp.StatusCode, apiMessage, fmt.Errorf("failed to parse nxip API response: %w", err)
@@ -122,6 +166,34 @@ func (c *nxipClient) do(ctx context.Context, method, path string, body any, out 
 	}
 
 	return httpResp.StatusCode, apiMessage, nil
+}
+
+// childrenListResponse is the minimal shape this client needs from
+// GET /v1/organizations/children (see childOrganizationResponse in
+// net-saas-monorepo's apps/api/src/routes/organizationLinks.ts) - just
+// enough to tell whether the list is empty, not the full per-child usage
+// payload.
+type childrenListResponse struct {
+	Data []json.RawMessage `json:"data"`
+}
+
+// hasAnyCustomers reports whether the API key's own organization currently
+// has any customer organizations linked to it, by calling
+// GET /v1/organizations/children?limit=1 - the smallest page that still
+// answers the question. Used only to decide whether Configure should warn
+// that `organization` is unset (docs/specs/msp-tenancy-phase2.md Part B),
+// so this is advisory only: ok is false whenever the check could not be
+// completed (a key whose role cannot list customers, a network error, or
+// any non-200 response), and the caller adds no diagnostic either way in
+// that case. This client must not itself have `organization` set when this
+// is called - the check runs against the key's own organization on purpose.
+func (c *nxipClient) hasAnyCustomers(ctx context.Context) (hasCustomers bool, ok bool) {
+	var result childrenListResponse
+	status, _, err := c.do(ctx, http.MethodGet, "/v1/organizations/children?limit=1", nil, &result)
+	if err != nil || status != http.StatusOK {
+		return false, false
+	}
+	return len(result.Data) > 0, true
 }
 
 // apiErrorSummary formats an actionable diagnostic for an unexpected API
