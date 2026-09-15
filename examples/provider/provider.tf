@@ -44,3 +44,42 @@ resource "nxip_address" "lb_vip" {
   status    = "RESERVED"
   hostname  = "lb-01"
 }
+
+# A provider (an MSP, an ISP, or an acquirer after a merger) whose API key
+# belongs to an Enterprise organization with linked customers manages each
+# customer through its own aliased provider block. organization is
+# provider-level only, never a resource argument, so one configuration
+# always targets exactly one organization - use an alias per customer to
+# manage several side by side. If you do not set organization, requests go
+# to the organization your API key belongs to; this is the default for
+# everyone, and nothing changes for an organization with no customers.
+provider "nxip" {
+  alias        = "customer_a"
+  organization = "org_acme_ltd"
+}
+
+provider "nxip" {
+  alias        = "customer_b"
+  organization = "org_widgets_co"
+}
+
+# Each customer is a hard boundary, so the same CIDR can be used in both
+# without conflict - unlike two pools inside one organization, which must
+# not overlap.
+resource "nxip_pool" "customer_a_production" {
+  provider    = nxip.customer_a
+  name        = "customer-a-prod"
+  cidr        = "10.0.0.0/16"
+  family      = "IPV4"
+  environment = "production"
+  region      = "us-east-1"
+}
+
+resource "nxip_pool" "customer_b_production" {
+  provider    = nxip.customer_b
+  name        = "customer-b-prod"
+  cidr        = "10.0.0.0/16"
+  family      = "IPV4"
+  environment = "production"
+  region      = "us-east-1"
+}
