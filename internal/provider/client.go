@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -63,6 +64,29 @@ const organizationHeader = "x-nxip-organization"
 // "not found" message (a missing pool, subnet or address) is worded
 // differently, so this match only ever fires for the organization case.
 const organizationNotFoundAPIMessage = "Organization not found."
+
+// organizationNotFoundDiagnosticPrefix opens the message do() rewrites
+// organizationNotFoundAPIMessage into below. Shared as one constant, rather
+// than repeated as a literal in both the rewrite and isOrganizationNotFound,
+// so the two can never drift apart: whatever do() actually writes is
+// exactly what isOrganizationNotFound checks for.
+const organizationNotFoundDiagnosticPrefix = "the `organization` attribute ("
+
+// isOrganizationNotFound reports whether a response is the specific 404
+// do() produces when x-nxip-organization named an organization that is not
+// this key's own, and is not one of its customers, or the link has ended.
+//
+// This matters to Read and Delete on every resource, which otherwise treat
+// any 404 as "this resource is already gone" - correct for an ordinary
+// missing pool/subnet/address, but wrong here: an organization-not-found
+// 404 means the wrong organization was asked about entirely, not that the
+// resource was deleted from the right one. Read must not drop a possibly-
+// still-live resource from state on that basis, and Delete must not report
+// success when it never reached the resource at all. Both should call this
+// before falling back to their ordinary 404 handling.
+func isOrganizationNotFound(status int, apiMessage string) bool {
+	return status == http.StatusNotFound && strings.HasPrefix(apiMessage, organizationNotFoundDiagnosticPrefix)
+}
 
 // do sends a request to `path` (e.g. "/v1/pools/abc123") with an optional
 // JSON body, decodes a JSON response into `out` (if non-nil and the body is
@@ -153,7 +177,7 @@ func (c *nxipClient) do(ctx context.Context, method, path string, body any, out 
 	// nothing to translate.
 	if c.organization != "" && apiMessage == organizationNotFoundAPIMessage {
 		apiMessage = fmt.Sprintf(
-			"the `organization` attribute (%q) is not this API key's own organization and is not "+
+			organizationNotFoundDiagnosticPrefix+"%q) is not this API key's own organization and is not "+
 				"one of its customers, or the link between them has ended",
 			c.organization,
 		)

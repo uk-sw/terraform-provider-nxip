@@ -226,6 +226,16 @@ func (r *AddressResource) Read(ctx context.Context, req resource.ReadRequest, re
 		return
 	}
 
+	// An organization-not-found 404 means the wrong organization was asked
+	// about, not that this address was released, so it is checked, and
+	// reported as an error, before the ordinary 404 handling below - which
+	// would otherwise silently drop a possibly still-live address from
+	// state.
+	if isOrganizationNotFound(status, apiMessage) {
+		resp.Diagnostics.AddError("API Error", apiErrorSummary("failed to fetch address", status, apiMessage))
+		return
+	}
+
 	// If the address was released outside of Terraform (e.g. deleted
 	// directly via the API), drop it from state so Terraform plans to
 	// recreate it rather than erroring on drift.
@@ -298,6 +308,16 @@ func (r *AddressResource) Delete(ctx context.Context, req resource.DeleteRequest
 	status, apiMessage, err := r.client.do(ctx, http.MethodDelete, "/v1/addresses/"+state.ID.ValueString(), nil, nil)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", err.Error())
+		return
+	}
+
+	// An organization-not-found 404 means the wrong organization was asked
+	// about, not that the address was successfully released from the
+	// right one - checked before the ordinary 404-means-idempotent-delete
+	// handling below, which would otherwise report success for an address
+	// this request never actually reached.
+	if isOrganizationNotFound(status, apiMessage) {
+		resp.Diagnostics.AddError("API Error", apiErrorSummary("failed to release address", status, apiMessage))
 		return
 	}
 

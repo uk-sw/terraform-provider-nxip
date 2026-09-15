@@ -217,6 +217,15 @@ func (r *PoolResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		return
 	}
 
+	// An organization-not-found 404 means the wrong organization was asked
+	// about, not that this pool was deleted, so it is checked, and
+	// reported as an error, before the ordinary 404 handling below - which
+	// would otherwise silently drop a possibly still-live pool from state.
+	if isOrganizationNotFound(status, apiMessage) {
+		resp.Diagnostics.AddError("API Error", apiErrorSummary("failed to fetch pool", status, apiMessage))
+		return
+	}
+
 	// If the pool was deleted outside of Terraform, drop it from state so
 	// Terraform plans to recreate it rather than erroring on drift.
 	if status == http.StatusNotFound {
@@ -292,6 +301,16 @@ func (r *PoolResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 	status, apiMessage, err := r.client.do(ctx, http.MethodDelete, "/v1/pools/"+state.ID.ValueString(), nil, nil)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", err.Error())
+		return
+	}
+
+	// An organization-not-found 404 means the wrong organization was asked
+	// about, not that the pool was successfully deleted from the right
+	// one - checked before the ordinary 404-means-idempotent-delete
+	// handling below, which would otherwise report success for a pool
+	// this request never actually reached.
+	if isOrganizationNotFound(status, apiMessage) {
+		resp.Diagnostics.AddError("API Error", apiErrorSummary("failed to delete pool", status, apiMessage))
 		return
 	}
 

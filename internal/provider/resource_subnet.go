@@ -374,6 +374,16 @@ func (r *SubnetResource) Read(ctx context.Context, req resource.ReadRequest, res
 		return
 	}
 
+	// An organization-not-found 404 means the wrong organization was asked
+	// about, not that this subnet was released, so it is checked, and
+	// reported as an error, before the ordinary 404 handling below - which
+	// would otherwise silently drop a possibly still-live subnet from
+	// state.
+	if isOrganizationNotFound(status, apiMessage) {
+		resp.Diagnostics.AddError("API Error", apiErrorSummary("failed to fetch subnet", status, apiMessage))
+		return
+	}
+
 	// If the subnet was released outside of Terraform (e.g. deleted
 	// directly via the API), drop it from state so Terraform plans to
 	// recreate it rather than erroring on drift.
@@ -457,6 +467,16 @@ func (r *SubnetResource) Delete(ctx context.Context, req resource.DeleteRequest,
 	status, apiMessage, err := r.client.do(ctx, http.MethodDelete, "/v1/subnets/"+state.ID.ValueString(), nil, nil)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", err.Error())
+		return
+	}
+
+	// An organization-not-found 404 means the wrong organization was asked
+	// about, not that the subnet was successfully released from the right
+	// one - checked before the ordinary 404-means-idempotent-delete
+	// handling below, which would otherwise report success for a subnet
+	// this request never actually reached.
+	if isOrganizationNotFound(status, apiMessage) {
+		resp.Diagnostics.AddError("API Error", apiErrorSummary("failed to release subnet", status, apiMessage))
 		return
 	}
 
