@@ -2,6 +2,15 @@
 
 All notable changes to this provider are documented here.
 
+## 0.7.1 (unreleased)
+
+- **Errors that are not bugs now say why, and link to a page that explains them.** Each hint links one section of [nx-ip.com/docs/troubleshooting](https://nx-ip.com/docs/troubleshooting). The API's own message is always kept, word for word, inside the detail, so anything already searchable still is.
+- **A subnet that finds no pool now says so plainly.** A create that fails because no pool matches reads "No matching pool for `<environment>` / `<region>` / `<family>`", and says what to do when the pool is in the same configuration: reference its attributes (for example `environment = nxip_pool.<name>.environment`) so Terraform creates the pool first. Written as plain text, Terraform sees no link between the two and creates both at once, so the subnet asks for a pool that does not exist yet. Links to `#no-matching-pool`.
+- A subnet create that fails because `parent_subnet_id` names no subnet now says which organization it was looked for in, and gets no pool hint, since no pool is involved.
+- **Organization not found** links to `#organization-not-found`, on every resource. An organization-not-found on a subnet create is never labelled "No matching pool".
+- **A pool delete refused because the pool still holds subnets** now covers the case that surprises people: Terraform replacing the pool because its `name`, `environment`, `region` or `family` changed. Those subnets must go first, or the change be undone. Links to `#pool-replaced`.
+- The `nxip_subnet` and provider examples use references to the pool instead of `depends_on`, and the subnet example also shows the plain-text form for a pool that lives in another configuration.
+
 ## 0.6.2 (2026-09-05)
 
 - **A pool's `cidr` can now be resized in place rather than forcing a destroy and recreate.** Growing or shrinking a pool previously planned as a replacement, which on a pool with subnets under it is not something anyone can safely apply. It now plans and applies as an Update, guarded server-side: the new CIDR must still contain every subnet at any depth, and must not overlap another pool. `10.168.0.0/16` shrinking to a `/20` plans as Update.
