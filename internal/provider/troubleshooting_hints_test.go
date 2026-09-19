@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -118,6 +119,20 @@ func diagsMention(diags diag.Diagnostics, substr string) bool {
 	return diagsContainSummary(diags, substr) || diagsContainDetail(diags, substr)
 }
 
+// diagsContainLink reports whether a diagnostic's detail holds exactly this
+// link, not merely a longer one that starts with it: a plain substring
+// check would accept "#no-matching-pools" as "#no-matching-pool", and the
+// anchor being exactly right is the whole point of the check.
+func diagsContainLink(diags diag.Diagnostics, link string) bool {
+	exact := regexp.MustCompile(regexp.QuoteMeta(link) + `($|[^A-Za-z0-9_-])`)
+	for _, d := range diags {
+		if exact.MatchString(d.Detail()) {
+			return true
+		}
+	}
+	return false
+}
+
 func TestSubnetCreate_NoMatchingPoolHint(t *testing.T) {
 	server := newErrorServer(t, http.StatusNotFound, apiNoMatchingPoolMessage)
 	defer server.Close()
@@ -137,7 +152,7 @@ func TestSubnetCreate_NoMatchingPoolHint(t *testing.T) {
 	if !diagsContainDetail(diags, "environment = nxip_pool.<name>.environment") {
 		t.Fatalf("expected the reference hint in the detail, got: %v", diags)
 	}
-	if !diagsContainDetail(diags, wantNoMatchingPoolLink) {
+	if !diagsContainLink(diags, wantNoMatchingPoolLink) {
 		t.Fatalf("expected the %s link in the detail, got: %v", wantNoMatchingPoolLink, diags)
 	}
 }
@@ -196,7 +211,7 @@ func TestSubnetCreate_OrganizationNotFoundIsNeverNoMatchingPool(t *testing.T) {
 	if !diagsContainDetail(diags, "the `organization` attribute (\"org_missing\")") {
 		t.Fatalf("expected the organization hint, got: %v", diags)
 	}
-	if !diagsContainDetail(diags, wantOrganizationNotFoundLink) {
+	if !diagsContainLink(diags, wantOrganizationNotFoundLink) {
 		t.Fatalf("expected the %s link, got: %v", wantOrganizationNotFoundLink, diags)
 	}
 }
@@ -214,7 +229,7 @@ func TestPoolRead_OrganizationNotFoundLinksAndKeepsState(t *testing.T) {
 	if !readResp.Diagnostics.HasError() {
 		t.Fatalf("expected an error diagnostic, got none")
 	}
-	if !diagsContainDetail(readResp.Diagnostics, wantOrganizationNotFoundLink) {
+	if !diagsContainLink(readResp.Diagnostics, wantOrganizationNotFoundLink) {
 		t.Fatalf("expected the %s link, got: %v", wantOrganizationNotFoundLink, readResp.Diagnostics)
 	}
 
@@ -255,7 +270,7 @@ func TestPoolDelete_HoldsSubnetsGivesReplacementHint(t *testing.T) {
 	if !diagsContainDetail(deleteResp.Diagnostics, "If Terraform is replacing this pool because its name, environment, region or family changed") {
 		t.Fatalf("expected the replacement hint, got: %v", deleteResp.Diagnostics)
 	}
-	if !diagsContainDetail(deleteResp.Diagnostics, wantPoolReplacedLink) {
+	if !diagsContainLink(deleteResp.Diagnostics, wantPoolReplacedLink) {
 		t.Fatalf("expected the %s link, got: %v", wantPoolReplacedLink, deleteResp.Diagnostics)
 	}
 }
