@@ -2,7 +2,7 @@
 
 All notable changes to this provider are documented here.
 
-## 0.7.1 (unreleased)
+## 0.7.1 (2026-09-19)
 
 - **Errors that are not bugs now say why, and link to a page that explains them.** Each hint links one section of [nx-ip.com/docs/troubleshooting](https://nx-ip.com/docs/troubleshooting). The API's own message is always kept, word for word, inside the detail, so anything already searchable still is.
 - **A subnet that finds no pool now says so plainly.** A create that fails because no pool matches reads "No matching pool for `<environment>` / `<region>` / `<family>`", and says what to do when the pool is in the same configuration: reference its attributes (for example `environment = nxip_pool.<name>.environment`) so Terraform creates the pool first. Written as plain text, Terraform sees no link between the two and creates both at once, so the subnet asks for a pool that does not exist yet. Links to `#no-matching-pool`.
