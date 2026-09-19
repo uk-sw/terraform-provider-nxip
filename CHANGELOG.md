@@ -2,7 +2,7 @@
 
 All notable changes to this provider are documented here.
 
-## 0.8.0 (unreleased)
+## 0.8.0 (2026-09-19)
 
 - **`nxip_address` `hostname` and `status` now update in place rather than forcing a destroy and recreate.** Correcting a hostname, or moving an address between `ACTIVE` and `RESERVED`, used to plan a replacement: the address was released and registered again, briefly freeing it for something else to claim. Both now plan as an Update and apply through `PATCH /v1/addresses/:id`, the same way `metadata` already did. `address` and `subnet_id` still force a new resource, since moving an address is still a release and a register.
 - **A hostname changed in the dashboard no longer makes the next plan want to replace the address.** It plans an in-place update back to what the configuration says.
