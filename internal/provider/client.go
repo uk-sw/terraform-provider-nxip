@@ -55,6 +55,31 @@ func newNxipClient(data *NxipProviderModel) *nxipClient {
 // net-saas-monorepo.
 const organizationHeader = "x-nxip-organization"
 
+// troubleshootingPageURL is the docs page that explains the errors people
+// hit for a reason that is not a bug (a missing pool, a wrong organization,
+// a pool Terraform wants to replace), one section per error. Kept as the one
+// place the URL is written, and only ever turned into a link through
+// troubleshootingLink below, so no link can be built by hand and drift.
+const troubleshootingPageURL = "https://nx-ip.com/docs/troubleshooting"
+
+// The anchors on troubleshootingPageURL that this provider links to. A
+// released provider prints these, so the page promises never to rename or
+// remove them (see docs/specs/troubleshooting-page.md in net-saas-monorepo).
+// Each is written here once and nowhere else: every call site names the
+// constant, so a typo cannot hide in one diagnostic out of several.
+const (
+	troubleshootingNoMatchingPool       = "no-matching-pool"
+	troubleshootingPoolReplaced         = "pool-replaced"
+	troubleshootingOrganizationNotFound = "organization-not-found"
+)
+
+// troubleshootingLink builds the sentence every diagnostic appends to point
+// at one section of the troubleshooting page, so the wording is the same
+// wherever it appears.
+func troubleshootingLink(anchor string) string {
+	return "Troubleshooting: " + troubleshootingPageURL + "#" + anchor
+}
+
 // organizationNotFoundAPIMessage is the API's own fixed error text (see
 // ORGANIZATION_NOT_FOUND_BODY in net-saas-monorepo's
 // apps/api/src/middleware/auth.ts) when x-nxip-organization names an
@@ -175,11 +200,18 @@ func (c *nxipClient) do(ctx context.Context, method, path string, body any, out 
 	// when this client actually sent the header - without it, the API
 	// cannot produce this exact message for this reason, so there is
 	// nothing to translate.
+	//
+	// The troubleshooting link goes on here too, rather than in each
+	// resource, for the same reason the rewrite does: this is the one place
+	// every resource's organization-not-found passes through, so all of them
+	// get it. It is appended after the prefix, never before, so
+	// isOrganizationNotFound still matches.
 	if c.organization != "" && apiMessage == organizationNotFoundAPIMessage {
 		apiMessage = fmt.Sprintf(
 			organizationNotFoundDiagnosticPrefix+"%q) is not this API key's own organization and is not "+
-				"one of its customers, or the link between them has ended",
+				"one of its customers, or the link between them has ended. %s",
 			c.organization,
+			troubleshootingLink(troubleshootingOrganizationNotFound),
 		)
 	}
 

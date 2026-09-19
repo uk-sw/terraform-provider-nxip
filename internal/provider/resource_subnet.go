@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/resourcevalidator"
@@ -348,7 +349,8 @@ func (r *SubnetResource) Create(ctx context.Context, req resource.CreateRequest,
 		return
 	}
 	if status != http.StatusCreated {
-		resp.Diagnostics.AddError("API Error", apiErrorSummary("failed to create subnet", status, apiMessage))
+		summary, detail := r.createErrorDiagnostic(plan, status, apiMessage)
+		resp.Diagnostics.AddError(summary, detail)
 		return
 	}
 
@@ -358,6 +360,52 @@ func (r *SubnetResource) Create(ctx context.Context, req resource.CreateRequest,
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+// createErrorDiagnostic turns a failed POST /v1/subnets into the summary
+// and detail Create reports. Most failures keep the generic shape. A 404
+// gets a hint, because on create it has three quite different causes that
+// the bare API message leaves the reader to tell apart:
+//
+//   - The organization was not found. do() has already rewritten this into
+//     a message naming the `organization` attribute, with its own link. It
+//     is checked first, because it is also a 404 on this route, and
+//     labelling it "No matching pool" would send someone off to create a
+//     pool that already exists, in an organization they cannot reach.
+//   - parent_subnet_id names no subnet in the organization this provider is
+//     configured for. No pool is involved at all, so no pool hint.
+//   - No pool matches environment/region/family. Most often the pool is in
+//     this same configuration and the subnet gives those values as plain
+//     text, so Terraform sees no dependency and creates both at once. The
+//     hint names that fix and links the page that explains it.
+//
+// The API's own message is kept verbatim inside the detail in every case,
+// so whatever someone already searches for still appears.
+func (r *SubnetResource) createErrorDiagnostic(plan SubnetResourceModel, status int, apiMessage string) (string, string) {
+	detail := apiErrorSummary("failed to create subnet", status, apiMessage)
+
+	if status != http.StatusNotFound || isOrganizationNotFound(status, apiMessage) {
+		return "API Error", detail
+	}
+
+	if !plan.ParentSubnetID.IsNull() && !plan.ParentSubnetID.IsUnknown() {
+		target := "the organization this API key belongs to"
+		if r.client != nil && r.client.organization != "" {
+			target = fmt.Sprintf("the organization set by the `organization` attribute (%q)", r.client.organization)
+		}
+		return "API Error", fmt.Sprintf(
+			"%s parent_subnet_id (%q) must be the id of an existing subnet in %s.",
+			detail, plan.ParentSubnetID.ValueString(), target,
+		)
+	}
+
+	summary := fmt.Sprintf(
+		"No matching pool for `%s` / `%s` / `%s`",
+		plan.Environment.ValueString(), plan.Region.ValueString(), plan.Family.ValueString(),
+	)
+	return summary, detail + " If the pool is created in this same configuration, reference its attributes " +
+		"(for example environment = nxip_pool.<name>.environment) so Terraform creates it first. " +
+		troubleshootingLink(troubleshootingNoMatchingPool)
 }
 
 func (r *SubnetResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {

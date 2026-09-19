@@ -320,13 +320,23 @@ func (r *PoolResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 	// 400 here means the pool still has subnets attached (the API refuses
 	// to delete a non-empty pool) — the API's own message already names the
 	// pool and the exact subnet count; appended Terraform-specific guidance
-	// covers the usual cause (destroy ordering put the pool before a subnet
+	// covers the usual causes (destroy ordering put the pool before a subnet
 	// that still references it, or a subnet was created outside Terraform).
+	//
+	// The second sentence covers the case that surprises people most: this
+	// Delete is not a destroy they asked for, but half of a replacement,
+	// because name, environment, region or family changed and none of them
+	// can change in place. Subnets that do not refer to the changed
+	// attribute are not replaced with the pool, so they still hold it and
+	// the apply stops here. The linked section explains both outcomes.
 	if status == http.StatusBadRequest {
 		resp.Diagnostics.AddError(
 			"API Error",
 			apiErrorSummary("failed to delete pool", status, apiMessage)+
-				" Destroy any nxip_subnet resources referencing this pool first.",
+				" Destroy any nxip_subnet resources referencing this pool first."+
+				" If Terraform is replacing this pool because its name, environment, region or family changed,"+
+				" the subnets under it must go first, or that change must be undone. "+
+				troubleshootingLink(troubleshootingPoolReplaced),
 		)
 		return
 	}
