@@ -233,7 +233,8 @@ resource "nxip_address" "test" {
 }
 
 // TestAccAddressResource_metadataUpdateInPlace is the regression test for
-// the one address attribute that is not RequiresReplace. Changing metadata
+// metadata updating in place (hostname and status now do too, covered
+// offline in resource_address_update_test.go). Changing metadata
 // must PATCH the address, not release it and register a new one at the
 // same IP - a recreate would briefly free the address for something else to
 // claim, which is exactly the kind of gap this fix closes.
@@ -279,10 +280,9 @@ func TestAccAddressResource_metadataUpdateInPlace(t *testing.T) {
 // TestAccAddressResource_noMetadataIsStable covers the other half of the
 // UseStateForUnknown fix: a config that never mentions metadata at all must
 // still plan clean on a second apply. Without the plan modifier the
-// attribute re-plans as "(known after apply)" every time, and because every
-// other attribute on this resource is still RequiresReplace, that alone
-// would force the address to be released and re-registered on any
-// unrelated change.
+// attribute re-plans as "(known after apply)" every time. While every other
+// attribute on this resource was RequiresReplace, that alone forced the
+// address to be released and re-registered on any unrelated change.
 func TestAccAddressResource_noMetadataIsStable(t *testing.T) {
 	region := fmt.Sprintf("acc-test-address-nometadata-%d", time.Now().UnixNano())
 	config := fmt.Sprintf(`

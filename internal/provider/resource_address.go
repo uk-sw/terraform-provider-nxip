@@ -78,28 +78,29 @@ func (r *AddressResource) Schema(ctx context.Context, req resource.SchemaRequest
 				Optional: true,
 				Computed: true,
 				Description: "\"ACTIVE\" (in use) or \"RESERVED\" (held but not yet in use). Defaults to " +
-					"\"ACTIVE\" server-side if omitted. Immutable: changing this forces a new resource.",
+					"\"ACTIVE\" server-side if omitted. Updated in place via PATCH /v1/addresses/:id, " +
+					"without releasing the address.",
 				PlanModifiers: []planmodifier.String{
-					// UseStateForUnknown as well as RequiresReplace, not one or
-					// the other. Optional+Computed with no UseStateForUnknown
-					// re-plans as unknown on every apply that leaves status
-					// unset in config, not just the first - which, combined
-					// with RequiresReplace, forces a destroy+recreate on any
-					// unrelated change at all. Invisible until metadata above
-					// stopped force-replacing, since every attribute on this
-					// resource used to force replace anyway - the same bug
-					// already found and fixed on nxip_subnet's
-					// environment/region/parent_subnet_id this week.
+					// Optional+Computed with no UseStateForUnknown re-plans as
+					// unknown on every apply that leaves status unset in
+					// config, not just the first. That used to matter more,
+					// when status was RequiresReplace and a spurious unknown
+					// forced a destroy and recreate. It is updated in place
+					// now, but an unknown would still show as a pointless
+					// "(known after apply)" update on every plan.
 					stringplanmodifier.UseStateForUnknown(),
-					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"hostname": schema.StringAttribute{
-				Optional:    true,
-				Description: "Human-readable hostname for whatever holds this address (e.g. \"web-01\"). Immutable: changing this forces a new resource.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
+				Optional: true,
+				Description: "Human-readable hostname for whatever holds this address (e.g. \"web-01\"). " +
+					"Updated in place via PATCH /v1/addresses/:id, without releasing the address. Removing " +
+					"it from config clears it.",
+				// Optional only, not Computed, and no plan modifier: config is
+				// the whole truth. A hostname set or corrected in the
+				// dashboard therefore shows up as an in-place update back to
+				// what config says, and a config with no hostname clears one,
+				// which is what "removing hostname clears it" relies on.
 			},
 			"metadata": schema.MapAttribute{
 				ElementType: types.StringType,
@@ -114,11 +115,11 @@ func (r *AddressResource) Schema(ctx context.Context, req resource.SchemaRequest
 					// Without this, a config that never sets metadata plans as
 					// "(known after apply)" on every apply, not just the first,
 					// since nothing tells the framework a value it already
-					// knows is stable. On this resource that would be worse
-					// than plan noise: every other attribute here is still
-					// RequiresReplace, so a spurious unknown would force a
-					// destroy and recreate on any unrelated change - the same
-					// bug already found and fixed on nxip_subnet and nxip_pool.
+					// knows is stable. That was worse than plan noise while
+					// every other attribute here was RequiresReplace, since a
+					// spurious unknown forced a destroy and recreate on any
+					// unrelated change. The same bug was found and fixed on
+					// nxip_subnet and nxip_pool.
 					mapplanmodifier.UseStateForUnknown(),
 				},
 			},
@@ -256,27 +257,72 @@ func (r *AddressResource) Read(ctx context.Context, req resource.ReadRequest, re
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
-// Update is only ever reached for a change to metadata - every other
-// attribute (subnet_id, address, family, status, hostname) is still
-// RequiresReplace, since those genuinely are immutable server-side.
-// metadata alone is patchable via PATCH /v1/addresses/:id, so tagging an
-// address with an owner or an asset tag no longer means releasing it and
-// registering a new one at the same IP.
+// addressUpdatePayload builds the PATCH /v1/addresses/:id body for an
+// in-place update: only the fields whose planned value differs from state.
+//
+// Sending only what changed, rather than everything each time, keeps the
+// address.updated audit row honest: it names the fields a request sent, so
+// a metadata-only change that also resent hostname and status would read as
+// if all three had been edited. A null planned hostname is sent as JSON
+// null, which is how the API clears one.
+//
+// The payload can come back empty. Terraform only calls Update when the
+// plan differs from state somewhere, and every other attribute is either
+// RequiresReplace or copied from state, so in practice it never does, but
+// the API answers an empty PATCH with a 400 and Update checks for it rather
+// than trusting that.
+func addressUpdatePayload(ctx context.Context, plan, state AddressResourceModel) (map[string]any, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	payload := map[string]any{}
+
+	if !plan.Hostname.IsUnknown() && !plan.Hostname.Equal(state.Hostname) {
+		if plan.Hostname.IsNull() {
+			payload["hostname"] = nil
+		} else {
+			payload["hostname"] = plan.Hostname.ValueString()
+		}
+	}
+	if !plan.Status.IsNull() && !plan.Status.IsUnknown() && !plan.Status.Equal(state.Status) {
+		payload["status"] = plan.Status.ValueString()
+	}
+	if !plan.Metadata.IsNull() && !plan.Metadata.IsUnknown() && !plan.Metadata.Equal(state.Metadata) {
+		var metadata map[string]string
+		diags.Append(plan.Metadata.ElementsAs(ctx, &metadata, false)...)
+		if diags.HasError() {
+			return nil, diags
+		}
+		payload["metadata"] = metadata
+	}
+
+	return payload, diags
+}
+
+// Update is reached for a change to hostname, status or metadata. Those
+// three are patchable via PATCH /v1/addresses/:id, so correcting a hostname
+// typo, marking an address RESERVED, or tagging it with an owner no longer
+// means releasing it and registering a new one at the same IP, which would
+// briefly free the address for something else to claim. subnet_id and
+// address stay RequiresReplace: moving an address is still a release and a
+// register, server-side too.
 func (r *AddressResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan AddressResourceModel
+	var plan, state AddressResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	payload := map[string]any{}
-	if !plan.Metadata.IsNull() && !plan.Metadata.IsUnknown() {
-		var metadata map[string]string
-		resp.Diagnostics.Append(plan.Metadata.ElementsAs(ctx, &metadata, false)...)
-		if resp.Diagnostics.HasError() {
-			return
-		}
-		payload["metadata"] = metadata
+	payload, diags := addressUpdatePayload(ctx, plan, state)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Nothing patchable changed (see addressUpdatePayload), so there is
+	// nothing to send: the plan already is the state.
+	if len(payload) == 0 {
+		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+		return
 	}
 
 	var result addressResponse

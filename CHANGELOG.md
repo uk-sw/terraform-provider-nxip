@@ -2,6 +2,14 @@
 
 All notable changes to this provider are documented here.
 
+## 0.8.0 (unreleased)
+
+- **`nxip_address` `hostname` and `status` now update in place rather than forcing a destroy and recreate.** Correcting a hostname, or moving an address between `ACTIVE` and `RESERVED`, used to plan a replacement: the address was released and registered again, briefly freeing it for something else to claim. Both now plan as an Update and apply through `PATCH /v1/addresses/:id`, the same way `metadata` already did. `address` and `subnet_id` still force a new resource, since moving an address is still a release and a register.
+- **A hostname changed in the dashboard no longer makes the next plan want to replace the address.** It plans an in-place update back to what the configuration says.
+- **Removing `hostname` from the configuration clears it** on the next apply, by sending `null`.
+- An update sends only the fields that changed, so the organization's audit log names exactly what was edited.
+- Needs the nxip API that accepts `hostname` and `status` on address PATCH. Against an older API, a hostname or status change fails with a 400 rather than being applied.
+
 ## 0.7.1 (2026-09-19)
 
 - **Errors that are not bugs now say why, and link to a page that explains them.** Each hint links one section of [nx-ip.com/docs/troubleshooting](https://nx-ip.com/docs/troubleshooting). The API's own message is always kept, word for word, inside the detail, so anything already searchable still is.

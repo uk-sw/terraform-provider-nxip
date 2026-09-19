@@ -39,9 +39,9 @@ resource "nxip_address" "lb_vip" {
 
 ### Optional
 
-- `hostname` (String) Human-readable hostname for whatever holds this address (e.g. "web-01"). Immutable: changing this forces a new resource.
+- `hostname` (String) Human-readable hostname for whatever holds this address (e.g. "web-01"). Updated in place via PATCH /v1/addresses/:id, without releasing the address. Removing it from config clears it.
 - `metadata` (Map of String) Free-form key/value tags for this address (e.g. owner, asset_tag), not interpreted by nxip, stored and returned as-is. Computed as well as Optional so a config that never sets this reads back as an empty map rather than null, matching what the API returns. Updated in place via PATCH /v1/addresses/:id - a full replace of the whole map, not a merge, same as the API itself, but does not force a new resource.
-- `status` (String) "ACTIVE" (in use) or "RESERVED" (held but not yet in use). Defaults to "ACTIVE" server-side if omitted. Immutable: changing this forces a new resource.
+- `status` (String) "ACTIVE" (in use) or "RESERVED" (held but not yet in use). Defaults to "ACTIVE" server-side if omitted. Updated in place via PATCH /v1/addresses/:id, without releasing the address.
 
 ### Read-Only
 
