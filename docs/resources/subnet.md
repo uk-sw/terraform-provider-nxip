@@ -13,16 +13,26 @@ Allocates a dynamic, non-overlapping CIDR subnet block. Either routes to a match
 ## Example Usage
 
 ```terraform
+# When the pool is in this same configuration, take environment, region and
+# family from the pool's own attributes. The reference is what tells
+# Terraform to create the pool first. Written as plain text instead,
+# Terraform sees no link between the two, creates them at the same time, and
+# the subnet fails with "No matching IPV4 IP pool found". See
+# https://nx-ip.com/docs/troubleshooting#no-matching-pool
+resource "nxip_pool" "production_us_east" {
+  name        = "prod-us-east-1"
+  cidr        = "10.0.0.0/16"
+  family      = "IPV4"
+  environment = "production"
+  region      = "us-east-1"
+}
+
 resource "nxip_subnet" "web_subnet" {
-  environment   = "production"
-  region        = "us-east-1"
-  family        = "IPV4"
+  environment   = nxip_pool.production_us_east.environment
+  region        = nxip_pool.production_us_east.region
+  family        = nxip_pool.production_us_east.family
   prefix_length = 24
   name          = "web-tier"
-
-  # Requires a matching nxip_pool to already exist for this
-  # environment/region/family - there is no implicit pool creation.
-  depends_on = [nxip_pool.production_us_east]
 }
 
 # Pinning the block instead of letting nxip choose. Use this for anything
@@ -32,13 +42,23 @@ resource "nxip_subnet" "web_subnet" {
 # every reference to the old address silently stops matching. Declaring the
 # CIDR is what makes it stable.
 resource "nxip_subnet" "database_tier" {
-  environment = "production"
-  region      = "us-east-1"
-  family      = "IPV4"
+  environment = nxip_pool.production_us_east.environment
+  region      = nxip_pool.production_us_east.region
+  family      = nxip_pool.production_us_east.family
   cidr        = "10.0.10.0/24"
   name        = "database-tier"
+}
 
-  depends_on = [nxip_pool.production_us_east]
+# When the pool lives in another configuration (the usual team workflow:
+# a platform team owns the pools, and each app team asks for address space
+# without needing to know which pool it comes from), plain text is right.
+# The pool must already exist, or be imported, before this is applied.
+resource "nxip_subnet" "app_team_a" {
+  environment   = "staging"
+  region        = "eu-west-2"
+  family        = "IPV4"
+  prefix_length = 26
+  name          = "app-team-a"
 }
 ```
 

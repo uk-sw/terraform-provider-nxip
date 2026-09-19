@@ -39,15 +39,15 @@ resource "nxip_pool" "production_us_east" {
 
 # A subnet auto-resolves onto a matching pool by environment/region/family -
 # this config never has to change whether or not that pool already has
-# other subnets under it.
+# other subnets under it. The pool is in this same configuration, so the
+# values are references to it rather than plain text: that is what tells
+# Terraform to create the pool first.
 resource "nxip_subnet" "web_subnet" {
-  environment   = "production"
-  region        = "us-east-1"
-  family        = "IPV4"
+  environment   = nxip_pool.production_us_east.environment
+  region        = nxip_pool.production_us_east.region
+  family        = nxip_pool.production_us_east.family
   prefix_length = 24
   name          = "web-tier"
-
-  depends_on = [nxip_pool.production_us_east]
 }
 
 # Addresses are always explicit, never auto-picked - which address to use
