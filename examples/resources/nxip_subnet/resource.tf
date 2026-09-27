@@ -45,3 +45,18 @@ resource "nxip_subnet" "app_team_a" {
   prefix_length = 26
   name          = "app-team-a"
 }
+
+# A kind-tagged block that sits directly in the pool without becoming the
+# landing point for other requests, such as a Kubernetes pod or service
+# range that is virtual, not routable. Left unset, landing_point defaults
+# to true for a kind-tagged top-level subnet, so this is the one case that
+# has to say so. It can be flipped later without recreating the subnet.
+resource "nxip_subnet" "pod_cidr" {
+  environment   = nxip_pool.production_us_east.environment
+  region        = nxip_pool.production_us_east.region
+  family        = nxip_pool.production_us_east.family
+  prefix_length = 16
+  kind          = "pod-cidr"
+  landing_point = false
+  name          = "cluster-a-pods"
+}

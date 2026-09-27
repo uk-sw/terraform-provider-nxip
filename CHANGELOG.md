@@ -2,6 +2,13 @@
 
 All notable changes to this provider are documented here.
 
+## 0.9.0 (unreleased)
+
+- **`nxip_subnet` gains `landing_point`**, the flag that says whether a subnet is where later requests for its environment/region/family are placed. Until now a kind-tagged top-level subnet was the landing point by virtue of its `kind` alone, so a virtual pod or service range tagged for structure next to a real region block gave every ordinary request two landing points and a 409 ("More than one structural subnet matches"). Set `landing_point = false` on such a range and it stays in the pool, tagged, without receiving anything.
+- **Left unset, nothing changes.** The provider does not send the field, and the API defaults it to `true` for a kind-tagged top-level subnet and `false` otherwise, so every existing configuration keeps its behaviour. The attribute is computed, reads back whichever the API chose, and is populated on `terraform import`.
+- **Changing `landing_point` is an in-place update through `PATCH /v1/subnets/:id`**, never a replacement, so the flag can be flipped on a subnet that already has children. `true` requires `kind` and no `parent_subnet_id`; the API rejects anything else with a 400.
+- Needs the nxip API that returns and accepts `landingPoint` (docs/specs/landing-point-flag.md in net-saas-monorepo). Against an older API, a configuration that sets `landing_point` fails with a 400 on the unknown field, and one that does not reads it back as `false`.
+
 ## 0.8.0 (2026-09-19)
 
 - **`nxip_address` `hostname` and `status` now update in place rather than forcing a destroy and recreate.** Correcting a hostname, or moving an address between `ACTIVE` and `RESERVED`, used to plan a replacement: the address was released and registered again, briefly freeing it for something else to claim. Both now plan as an Update and apply through `PATCH /v1/addresses/:id`, the same way `metadata` already did. `address` and `subnet_id` still force a new resource, since moving an address is still a release and a register.
