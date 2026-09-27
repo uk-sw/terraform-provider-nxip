@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/mapplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -36,6 +37,7 @@ type SubnetResourceModel struct {
 	PrefixLength   types.Int64  `tfsdk:"prefix_length"`
 	ParentSubnetID types.String `tfsdk:"parent_subnet_id"`
 	Kind           types.String `tfsdk:"kind"`
+	LandingPoint   types.Bool   `tfsdk:"landing_point"`
 	Name           types.String `tfsdk:"name"`
 	Description    types.String `tfsdk:"description"`
 	CIDR           types.String `tfsdk:"cidr"`
@@ -49,7 +51,7 @@ func (r *SubnetResource) Metadata(ctx context.Context, req resource.MetadataRequ
 func (r *SubnetResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Description: "Allocates a dynamic, non-overlapping CIDR subnet block. Either routes to a matching " +
-			"nxip_pool by environment/region/family, auto-resolving onto a kind-tagged subnet under that " +
+			"nxip_pool by environment/region/family, auto-resolving onto the landing point subnet under that " +
 			"pool first if one exists for that exact key, so this resource's config never has to change " +
 			"whether or not that structure exists yet, or, given parent_subnet_id, nests directly under " +
 			"an existing subnet instead, bypassing auto-resolution entirely. Requires a pool to already " +
@@ -130,7 +132,7 @@ func (r *SubnetResource) Schema(ctx context.Context, req resource.SchemaRequest,
 					"family alone can disambiguate (e.g. a second VPC-scoped subnet under the same region). " +
 					"When set, environment/region are inherited from the parent, not read from this config. " +
 					"Computed as well as Optional: even a config that never sets this can end up nested, via " +
-					"auto-resolution onto a kind-tagged subnet matching environment/region/family. This is " +
+					"auto-resolution onto the landing point subnet matching environment/region/family. This is " +
 					"populated automatically after apply in that case, not left null. " +
 					"Subnets are immutable: changing this forces a new resource.",
 				PlanModifiers: []planmodifier.String{
@@ -142,12 +144,36 @@ func (r *SubnetResource) Schema(ctx context.Context, req resource.SchemaRequest,
 			"kind": schema.StringAttribute{
 				Optional: true,
 				Description: "Free-text label for what this level of an address plan represents (\"region\", " +
-					"\"vpc\", \"site\", \"vlan\"...); not validated against a fixed list. Only meaningful on a " +
-					"top-level subnet (no parent_subnet_id): it's what makes this subnet eligible as " +
-					"the auto-resolution landing point for later requests matching the same environment/" +
-					"region/family. Subnets are immutable: changing this forces a new resource.",
+					"\"vpc\", \"site\", \"vlan\"...); not validated against a fixed list. A kind-tagged " +
+					"top-level subnet (no parent_subnet_id) becomes the auto-resolution landing point for " +
+					"later requests matching the same environment/region/family unless landing_point is set " +
+					"to false. Subnets are immutable: changing this forces a new resource.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"landing_point": schema.BoolAttribute{
+				Optional: true,
+				Computed: true,
+				Description: "Whether this subnet is the landing point that later requests matching its " +
+					"environment/region/family are placed inside. Left unset, nxip defaults it to true for a " +
+					"kind-tagged top-level subnet (no parent_subnet_id) and false otherwise, and this reads " +
+					"back whichever it chose. Set it to false on a kind-tagged subnet that should sit " +
+					"directly in the pool without receiving other requests, for example a virtual pod or " +
+					"service range. true requires kind to be set and no parent_subnet_id; the API rejects " +
+					"anything else. At most one landing point per environment/region/family. Updated in place " +
+					"via PATCH /v1/subnets/:id, so flipping it does not force a new resource.",
+				PlanModifiers: []planmodifier.Bool{
+					// Optional+Computed with no UseStateForUnknown re-plans as
+					// "(known after apply)" whenever anything else about a
+					// subnet that leaves landing_point unset changes, a rename
+					// for instance, the same trap cidr and parent_subnet_id
+					// had. Nothing here is RequiresReplace, so the cost would
+					// be plan noise rather than a spurious replace, but a
+					// rename that claims the landing point may change is
+					// still wrong, and anything reading the planned value
+					// downstream would see unknown.
+					boolplanmodifier.UseStateForUnknown(),
 				},
 			},
 			"name": schema.StringAttribute{
@@ -232,6 +258,12 @@ func (r *SubnetResource) Configure(ctx context.Context, req resource.ConfigureRe
 // single subnet (POST /v1/subnets and GET /v1/subnets/:id).
 // ParentSubnetID/Kind/Name/Description are pointers since the API returns
 // JSON null, not an empty string, for a subnet that doesn't have one.
+//
+// LandingPoint is the one place the API's `landingPoint` field name is
+// spelled for a response; subnetLandingPointField below is the one place
+// it is spelled for a request body. The API sends it on every subnet
+// response (docs/specs/landing-point-flag.md in net-saas-monorepo), so a
+// plain bool is enough: there is no null to tell apart from false.
 type subnetResponse struct {
 	ID             string            `json:"id"`
 	CIDR           string            `json:"cidr"`
@@ -241,10 +273,16 @@ type subnetResponse struct {
 	Region         string            `json:"region"`
 	ParentSubnetID *string           `json:"parentSubnetId"`
 	Kind           *string           `json:"kind"`
+	LandingPoint   bool              `json:"landingPoint"`
 	Name           *string           `json:"name"`
 	Description    *string           `json:"description"`
 	Metadata       map[string]string `json:"metadata"`
 }
+
+// subnetLandingPointField is the request-body key for landing_point on
+// POST /v1/subnets and PATCH /v1/subnets/:id. Named once so Create and
+// Update cannot drift apart on the spelling.
+const subnetLandingPointField = "landingPoint"
 
 // applySubnetResponse copies API response fields into the resource
 // model — shared by Create and Read so the two can't drift apart on which
@@ -272,6 +310,10 @@ func applySubnetResponse(ctx context.Context, model *SubnetResourceModel, result
 	} else {
 		model.Kind = types.StringNull()
 	}
+	// Always synced from the response: when config leaves landing_point
+	// unset the API decides (true for a kind-tagged top-level subnet, false
+	// otherwise), and this is how that decision reaches state.
+	model.LandingPoint = types.BoolValue(result.LandingPoint)
 	if result.Name != nil {
 		model.Name = types.StringValue(*result.Name)
 	} else {
@@ -326,6 +368,15 @@ func (r *SubnetResource) Create(ctx context.Context, req resource.CreateRequest,
 	}
 	if !plan.Kind.IsNull() {
 		payload["kind"] = plan.Kind.ValueString()
+	}
+	// landing_point is Optional+Computed, so a config that never sets it
+	// plans as unknown, and ValueBool() on an unknown silently returns
+	// false. Sending that false would turn every kind-tagged region block
+	// written before this attribute existed into a non-landing subnet. The
+	// API's default (true for kind-tagged top-level, false otherwise) only
+	// applies to an absent field, so unknown must mean absent here.
+	if !plan.LandingPoint.IsNull() && !plan.LandingPoint.IsUnknown() {
+		payload[subnetLandingPointField] = plan.LandingPoint.ValueBool()
 	}
 	if !plan.Name.IsNull() {
 		payload["name"] = plan.Name.ValueString()
@@ -452,16 +503,19 @@ func (r *SubnetResource) Read(ctx context.Context, req resource.ReadRequest, res
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
-// Update is only ever reached for a change to name, description, and/or
-// metadata - every other attribute (environment, region, family,
-// prefix_length, parent_subnet_id, kind) is still RequiresReplace, since
-// those genuinely are immutable server-side. These three are purely
-// descriptive, and PATCH /v1/subnets/:id already supports updating them
-// in place, so there's no reason to destroy and recreate the resource,
-// and its children, just to fix a typo in a name.
+// Update is only ever reached for a change to name, description, metadata
+// and/or landing_point - every other attribute (environment, region,
+// family, prefix_length, parent_subnet_id, kind) is still RequiresReplace,
+// since those genuinely are immutable server-side. The first three are
+// purely descriptive, and PATCH /v1/subnets/:id already supports updating
+// them in place, so there's no reason to destroy and recreate the resource,
+// and its children, just to fix a typo in a name. landing_point changes
+// which subnet later requests land in, but nothing about this subnet's own
+// address, so the API lets it flip in place as well.
 func (r *SubnetResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan SubnetResourceModel
+	var plan, state SubnetResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -484,6 +538,17 @@ func (r *SubnetResource) Update(ctx context.Context, req resource.UpdateRequest,
 			return
 		}
 		payload["metadata"] = metadata
+	}
+	// landing_point goes only when it actually changed, the way
+	// nxip_address sends hostname and status. Unlike the descriptive fields
+	// it is validated on write (true needs kind and no parent), and the
+	// subnet.updated audit row records it whenever it is sent, so resending
+	// the unchanged value on every rename would make every rename read as
+	// if the landing point had been edited too. Unknown cannot happen here
+	// (UseStateForUnknown resolves it to state), but it is guarded anyway
+	// for the same reason as in Create.
+	if !plan.LandingPoint.IsNull() && !plan.LandingPoint.IsUnknown() && !plan.LandingPoint.Equal(state.LandingPoint) {
+		payload[subnetLandingPointField] = plan.LandingPoint.ValueBool()
 	}
 
 	var result subnetResponse
