@@ -47,6 +47,11 @@ type fakeSubnetAPI struct {
 	patches    []map[string]any
 	creates    int
 	deletes    int
+	// rejectNullClear makes PATCH answer `name: null` or
+	// `description: null` with a 400, the way the API did before it
+	// accepted null there to clear a value. Off by default: the fake
+	// otherwise models the API that does.
+	rejectNullClear bool
 }
 
 func newFakeSubnetAPI(t *testing.T) *fakeSubnetAPI {
@@ -102,6 +107,17 @@ func (f *fakeSubnetAPI) handle(w http.ResponseWriter, r *http.Request) {
 			writeAPIError(w, http.StatusBadRequest, msg)
 			return
 		}
+		// The API's create schema has name as min(1), so "" is a 400, and
+		// stores `description || undefined`, so "" becomes null. Mirrored
+		// here because the provider's handling of "" is built on exactly
+		// those two behaviours.
+		if body["name"] == "" {
+			writeAPIError(w, http.StatusBadRequest, "body/name String must contain at least 1 character(s)")
+			return
+		}
+		if body["description"] == "" {
+			body["description"] = nil
+		}
 
 		prefixLength := float64(24)
 		if v, ok := body["prefixLength"].(float64); ok {
@@ -155,6 +171,17 @@ func (f *fakeSubnetAPI) handle(w http.ResponseWriter, r *http.Request) {
 		for key := range body {
 			if key != "name" && key != "description" && key != "metadata" && key != subnetLandingPointField {
 				writeAPIError(w, http.StatusBadRequest, "Unrecognized key: "+key)
+				return
+			}
+		}
+		for _, key := range []string{"name", "description"} {
+			value, present := body[key]
+			if present && value == nil && f.rejectNullClear {
+				writeAPIError(w, http.StatusBadRequest, "body/"+key+" Expected string, received null")
+				return
+			}
+			if key == "name" && value == "" {
+				writeAPIError(w, http.StatusBadRequest, "body/name String must contain at least 1 character(s)")
 				return
 			}
 		}

@@ -180,12 +180,25 @@ func (r *SubnetResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				Optional: true,
 				Description: "Human-readable name for this subnet (e.g. \"App Team A\"). Updated in place via " +
 					"PATCH /v1/subnets/:id - unlike every other attribute here, changing this does not force a " +
-					"new resource, since it's purely descriptive and has no bearing on the allocated CIDR.",
+					"new resource, since it's purely descriptive and has no bearing on the allocated CIDR. " +
+					"Removing it from config, or setting it to \"\", clears it. A name set outside Terraform " +
+					"shows up as an in-place update back to what config says.",
+				// Optional only, not Computed, and no plan modifier: config is
+				// the whole truth, the stance nxip_address.hostname already
+				// takes. Computed plus UseStateForUnknown would also stop the
+				// "inconsistent result after apply" a dashboard edit used to
+				// cause, but by silently adopting the dashboard's value, so
+				// removing name from config would never clear it and the
+				// drift would be invisible. See subnetClearableStringPatch
+				// and syncClearableString for how null and "" are handled.
 			},
 			"description": schema.StringAttribute{
 				Optional: true,
 				Description: "Free-text notes for why this subnet exists. Updated in place via " +
-					"PATCH /v1/subnets/:id, same as name - purely descriptive, does not force a new resource.",
+					"PATCH /v1/subnets/:id, same as name - purely descriptive, does not force a new resource. " +
+					"Removing it from config, or setting it to \"\", clears it. A description set outside " +
+					"Terraform shows up as an in-place update back to what config says.",
+				// Same reasoning as name above.
 			},
 			"cidr": schema.StringAttribute{
 				Optional: true,
@@ -284,6 +297,67 @@ type subnetResponse struct {
 // Update cannot drift apart on the spelling.
 const subnetLandingPointField = "landingPoint"
 
+// isEmptyString reports whether a name or description holds nothing: null,
+// or the empty string. The API does not tell the two apart (it stores ""
+// as null on create), so neither does the provider when deciding what to
+// send. Unknown is not empty: it never reaches Create or Update for these
+// Optional-only attributes, but if it did, guessing "empty" would clear a
+// value nobody asked to clear.
+func isEmptyString(v types.String) bool {
+	return !v.IsUnknown() && v.ValueString() == ""
+}
+
+// syncClearableString is how a name or description read from the API
+// reaches state. `current` is what the model already holds for it: the plan
+// in Create and Update, the prior state in Read.
+//
+// When the API holds nothing (null, or "" from a PATCH written before null
+// was accepted) and the model also holds nothing, the model's own form is
+// kept. That is what lets `description = ""` survive a create: Terraform
+// requires the value after apply to equal the planned one, and the plan
+// says "", so writing back the API's null would fail with "inconsistent
+// result after apply ... was cty.StringVal(\"\"), but now null". The other
+// way round, an attribute left out of config stays null even if the API
+// hands back "".
+//
+// Anything else is copied from the API as it is. A description set in the
+// dashboard on a subnet whose config has none therefore lands in state,
+// and the next plan shows an in-place update back to null, which Update
+// sends as an explicit null to clear it.
+func syncClearableString(current types.String, apiValue *string) types.String {
+	if (apiValue == nil || *apiValue == "") && isEmptyString(current) {
+		return current
+	}
+	if apiValue == nil {
+		return types.StringNull()
+	}
+	return types.StringValue(*apiValue)
+}
+
+// subnetClearableStringPatch adds name or description to an Update's PATCH
+// body, mirroring addressUpdatePayload's handling of hostname: a value is
+// sent as itself, and a value removed from config (null, or "") is sent as
+// JSON null, which is how PATCH /v1/subnets/:id clears one.
+//
+// Null goes only when state still holds something to clear. Sending it on
+// every update of a subnet that never had a description would put
+// "description" in every subnet.updated audit row, and against an API
+// that predates null on this route it would turn every unrelated rename or
+// metadata edit into a 400. A non-empty value is resent whether or not it
+// changed, as Update always did before null existed here.
+func subnetClearableStringPatch(payload map[string]any, key string, plan, state types.String) {
+	if plan.IsUnknown() {
+		return
+	}
+	if !isEmptyString(plan) {
+		payload[key] = plan.ValueString()
+		return
+	}
+	if !isEmptyString(state) {
+		payload[key] = nil
+	}
+}
+
 // applySubnetResponse copies API response fields into the resource
 // model — shared by Create and Read so the two can't drift apart on which
 // fields get synced back into state.
@@ -314,16 +388,8 @@ func applySubnetResponse(ctx context.Context, model *SubnetResourceModel, result
 	// unset the API decides (true for a kind-tagged top-level subnet, false
 	// otherwise), and this is how that decision reaches state.
 	model.LandingPoint = types.BoolValue(result.LandingPoint)
-	if result.Name != nil {
-		model.Name = types.StringValue(*result.Name)
-	} else {
-		model.Name = types.StringNull()
-	}
-	if result.Description != nil {
-		model.Description = types.StringValue(*result.Description)
-	} else {
-		model.Description = types.StringNull()
-	}
+	model.Name = syncClearableString(model.Name, result.Name)
+	model.Description = syncClearableString(model.Description, result.Description)
 
 	metadataValue, diags := types.MapValueFrom(ctx, types.StringType, result.Metadata)
 	model.Metadata = metadataValue
@@ -378,10 +444,16 @@ func (r *SubnetResource) Create(ctx context.Context, req resource.CreateRequest,
 	if !plan.LandingPoint.IsNull() && !plan.LandingPoint.IsUnknown() {
 		payload[subnetLandingPointField] = plan.LandingPoint.ValueBool()
 	}
-	if !plan.Name.IsNull() {
+	// name and description go only when they hold something. "" means "no
+	// name" here, the same as leaving the attribute out: the API stores an
+	// empty description as null and rejects an empty name outright, so
+	// sending "" would either fail the create or come back as null, which
+	// Terraform reports as an inconsistent result. syncClearableString
+	// keeps the "" in state afterwards so config and state still agree.
+	if !isEmptyString(plan.Name) {
 		payload["name"] = plan.Name.ValueString()
 	}
-	if !plan.Description.IsNull() {
+	if !isEmptyString(plan.Description) {
 		payload["description"] = plan.Description.ValueString()
 	}
 	if !plan.Metadata.IsNull() && !plan.Metadata.IsUnknown() {
@@ -521,16 +593,14 @@ func (r *SubnetResource) Update(ctx context.Context, req resource.UpdateRequest,
 	}
 
 	payload := map[string]any{}
-	// Same "only include what's actually set" reasoning as Create: an
-	// absent field in the PATCH body means "leave unchanged" server-side,
-	// not "clear this", so omitting a null value here is correct, not
-	// merely convenient.
-	if !plan.Name.IsNull() {
-		payload["name"] = plan.Name.ValueString()
-	}
-	if !plan.Description.IsNull() {
-		payload["description"] = plan.Description.ValueString()
-	}
+	// An absent field in the PATCH body means "leave unchanged" server-side,
+	// so a name or description removed from config has to be sent as an
+	// explicit null to be cleared. Leaving it out, as Update once did, left
+	// the API's value in place, the response carried it back, and Terraform
+	// failed the apply with "was null, but now ...", on every apply after a
+	// dashboard edit.
+	subnetClearableStringPatch(payload, "name", plan.Name, state.Name)
+	subnetClearableStringPatch(payload, "description", plan.Description, state.Description)
 	if !plan.Metadata.IsNull() && !plan.Metadata.IsUnknown() {
 		var metadata map[string]string
 		resp.Diagnostics.Append(plan.Metadata.ElementsAs(ctx, &metadata, false)...)
