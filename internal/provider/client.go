@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 )
 
 // nxipClient centralizes the HTTP plumbing every resource needs: base URL
@@ -26,6 +29,73 @@ type nxipClient struct {
 	apiKey       string
 	organization string
 	http         *http.Client
+
+	// wait and now are what do() uses to sit out a 429 and to read a
+	// Retry-After given as a date. Left nil, which is what
+	// newNxipClient and every hand-built client in the tests do, they are
+	// a real context-aware sleep and time.Now. Tests set them so a retry
+	// can be checked without actually waiting a minute.
+	wait func(ctx context.Context, d time.Duration) error
+	now  func() time.Time
+}
+
+// The 429 retry budget. The API's limiter works on a one-minute window and
+// says in Retry-After how much of it is left, so no honest wait is ever
+// longer than rateLimitMaxWait; the cap is there so a malformed or hostile
+// header cannot hang an apply. rateLimitMaxRetries keeps the worst case
+// to a few minutes before the 429 is reported as it was.
+const (
+	rateLimitMaxRetries = 3
+	rateLimitMaxWait    = 60 * time.Second
+	// rateLimitDefaultWait is used when a 429 carries no Retry-After that
+	// can be read. Both of the API's limiters send one, so this is for
+	// something in between (a proxy, say) answering 429 on its own.
+	rateLimitDefaultWait = 10 * time.Second
+)
+
+// retryAfterDelay reads a Retry-After header, which RFC 9110 allows as
+// either a number of seconds or an HTTP date. The API sends seconds
+// ("retry-after: 57"); a date is handled because the header allows it and
+// anything in front of the API may use it. A date already passed means no
+// wait. The result is capped at rateLimitMaxWait, and anything unreadable
+// falls back to rateLimitDefaultWait.
+func retryAfterDelay(header string, now time.Time) time.Duration {
+	header = strings.TrimSpace(header)
+	if header == "" {
+		return rateLimitDefaultWait
+	}
+	var delay time.Duration
+	if seconds, err := strconv.Atoi(header); err == nil {
+		if seconds < 0 {
+			return rateLimitDefaultWait
+		}
+		delay = time.Duration(seconds) * time.Second
+	} else if when, err := http.ParseTime(header); err == nil {
+		delay = when.Sub(now)
+		if delay < 0 {
+			delay = 0
+		}
+	} else {
+		return rateLimitDefaultWait
+	}
+	if delay > rateLimitMaxWait {
+		delay = rateLimitMaxWait
+	}
+	return delay
+}
+
+// sleepContext waits for d, or returns early with the context's error if
+// the context ends first, so Ctrl+C during a rate-limit wait stops the
+// apply at once rather than after the full Retry-After.
+func sleepContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func newNxipClient(data *NxipProviderModel) *nxipClient {
@@ -128,37 +198,89 @@ func isOrganizationNotFound(status int, apiMessage string) bool {
 // Extracting it here, once, means every resource's error branches can
 // surface it instead of a bare status code, without each one re-implementing
 // the same best-effort JSON peek.
+//
+// A 429 is the one status do() acts on itself rather than handing back: it
+// waits for the response's Retry-After and sends the request again, up to
+// rateLimitMaxRetries times, and only then returns the last 429 to the
+// caller like any other status. Without this, a plan then apply of a couple
+// of dozen resources on the free tier (60 requests a minute) failed partway
+// through, although the API had said exactly how long to wait.
+//
+// Retrying is safe for every method, POST included, only because both of
+// the API's rate limiters reject in onRequest/preHandler hooks, before any
+// route handler runs (apps/api/src/app.ts in net-saas-monorepo), so a 429
+// never follows a write that happened. Nothing else is retried: a 5xx or a
+// timeout on a POST may follow a committed allocation, and sending it again
+// would allocate a second block.
 func (c *nxipClient) do(ctx context.Context, method, path string, body any, out any) (int, string, error) {
-	var reqBody *bytes.Buffer
+	// Encoded once, outside the retry loop, and wrapped in a fresh reader
+	// per attempt: a reader is drained by the first send, so reusing it
+	// would retry with an empty body.
+	var encoded []byte
 	if body != nil {
-		encoded, err := json.Marshal(body)
+		var err error
+		encoded, err = json.Marshal(body)
 		if err != nil {
 			return 0, "", fmt.Errorf("failed to encode request body: %w", err)
 		}
-		reqBody = bytes.NewBuffer(encoded)
-	} else {
-		reqBody = bytes.NewBuffer(nil)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reqBody)
-	if err != nil {
-		return 0, "", fmt.Errorf("failed to create request: %w", err)
+	wait := c.wait
+	if wait == nil {
+		wait = sleepContext
 	}
-	httpReq.Header.Set("x-api-key", c.apiKey)
-	// Sent only when organization is actually set: an empty header would
-	// still be a present header, and the API only treats the header as
-	// absent when the client sends none at all (see resolveActingOnBehalf
-	// in net-saas-monorepo's apps/api/src/middleware/auth.ts).
-	if c.organization != "" {
-		httpReq.Header.Set(organizationHeader, c.organization)
-	}
-	if body != nil {
-		httpReq.Header.Set("Content-Type", "application/json")
+	now := c.now
+	if now == nil {
+		now = time.Now
 	}
 
-	httpResp, err := c.http.Do(httpReq)
-	if err != nil {
-		return 0, "", fmt.Errorf("failed to reach nxip API: %w", err)
+	var httpResp *http.Response
+	for attempt := 0; ; attempt++ {
+		httpReq, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, bytes.NewReader(encoded))
+		if err != nil {
+			return 0, "", fmt.Errorf("failed to create request: %w", err)
+		}
+		httpReq.Header.Set("x-api-key", c.apiKey)
+		// Sent only when organization is actually set: an empty header would
+		// still be a present header, and the API only treats the header as
+		// absent when the client sends none at all (see resolveActingOnBehalf
+		// in net-saas-monorepo's apps/api/src/middleware/auth.ts).
+		if c.organization != "" {
+			httpReq.Header.Set(organizationHeader, c.organization)
+		}
+		if body != nil {
+			httpReq.Header.Set("Content-Type", "application/json")
+		}
+
+		httpResp, err = c.http.Do(httpReq)
+		if err != nil {
+			return 0, "", fmt.Errorf("failed to reach nxip API: %w", err)
+		}
+		if httpResp.StatusCode != http.StatusTooManyRequests || attempt >= rateLimitMaxRetries {
+			break
+		}
+
+		delay := retryAfterDelay(httpResp.Header.Get("Retry-After"), now())
+		// Drained before closing so the connection can be reused for the
+		// retry. The body is only the API's "retry in N seconds" sentence,
+		// which Retry-After already says; the last 429's body is the one
+		// that reaches the caller, read below like any other response.
+		_, _ = io.Copy(io.Discard, httpResp.Body)
+		httpResp.Body.Close()
+
+		// Warn, so it shows at TF_LOG=WARN and above: an apply that goes
+		// quiet for up to a minute should say why to anyone who looks.
+		tflog.Warn(ctx, "nxip API rate limit reached, waiting before retrying", map[string]interface{}{
+			"method":       method,
+			"path":         path,
+			"retry_after":  httpResp.Header.Get("Retry-After"),
+			"wait_seconds": delay.Seconds(),
+			"retry":        attempt + 1,
+			"max_retries":  rateLimitMaxRetries,
+		})
+		if err := wait(ctx, delay); err != nil {
+			return http.StatusTooManyRequests, "", fmt.Errorf("stopped waiting for the nxip API rate limit to reset: %w", err)
+		}
 	}
 	defer httpResp.Body.Close()
 
@@ -168,6 +290,7 @@ func (c *nxipClient) do(ctx context.Context, method, path string, body any, out 
 	// and peek for a `message` field on failure without a second round trip.
 	var respBody []byte
 	if httpResp.StatusCode != http.StatusNoContent {
+		var err error
 		respBody, err = io.ReadAll(httpResp.Body)
 		if err != nil {
 			return httpResp.StatusCode, "", fmt.Errorf("failed to read nxip API response: %w", err)
