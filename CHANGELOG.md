@@ -2,6 +2,14 @@
 
 All notable changes to this provider are documented here.
 
+## 0.10.0 (unreleased)
+
+- **A `name` or `description` set on an `nxip_subnet` outside Terraform no longer breaks every later apply.** A subnet whose configuration had no description, given one in the dashboard, used to fail each apply with "Provider produced inconsistent result after apply ... .description: was null, but now ...". The next plan now shows an in-place update back to what the configuration says, and the apply clears the value.
+- **Removing `name` or `description` from the configuration clears it** on the next apply, by sending `null`, the way `nxip_address` already clears `hostname`. Setting either to `""` does the same.
+- **`description = ""` (or `name = ""`) on a new subnet now works.** The provider sends nothing for an empty value, the API holds it as null, and the plan stays clean. It used to fail the create with "was cty.StringVal(\"\"), but now null" for a description, and with a 400 for a name.
+- **A rate-limited request is retried.** When the API answers 429, the provider waits for the response's `Retry-After` (seconds or an HTTP date, at most a minute) and sends the request again, up to three times, before reporting the 429 as it always did. A plan then apply of a few dozen resources on the free tier no longer fails partway through. Each wait is logged at `WARN`, so `TF_LOG=WARN` shows why an apply has gone quiet. Only 429 is retried: the API rejects a rate-limited request before doing any work, so a retried create cannot allocate twice. Other errors are reported at once, as before.
+- Clearing a value needs the nxip API that accepts `null` for `name` and `description` on `PATCH /v1/subnets/:id`. Against an older API, clearing one fails with that API's 400 rather than an inconsistent result, and everything else, renames and metadata edits on subnets with no description included, works as before, since `null` is only sent when there is something to clear.
+
 ## 0.9.0 (unreleased)
 
 - **`nxip_subnet` gains `landing_point`**, the flag that says whether a subnet is where later requests for its environment/region/family are placed. Until now a kind-tagged top-level subnet was the landing point by virtue of its `kind` alone, so a virtual pod or service range tagged for structure next to a real region block gave every ordinary request two landing points and a 409 ("More than one structural subnet matches"). Set `landing_point = false` on such a range and it stays in the pool, tagged, without receiving anything.
