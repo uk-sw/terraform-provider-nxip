@@ -73,7 +73,7 @@ func testAccCheckSubnetDestroyed(s *terraform.State) error {
 		if err != nil {
 			return err
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusNotFound {
 			return fmt.Errorf("subnet %s still exists after destroy (API returned status %d)", rs.Primary.ID, resp.StatusCode)
@@ -326,7 +326,7 @@ func deleteSubnetOutOfBand(resourceName string) resource.TestCheckFunc {
 		if err != nil {
 			return err
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
 			return fmt.Errorf("out-of-band delete failed with status %d", resp.StatusCode)
