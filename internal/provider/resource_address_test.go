@@ -32,7 +32,7 @@ func testAccCheckAddressDestroyed(s *terraform.State) error {
 		if err != nil {
 			return err
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusNotFound {
 			return fmt.Errorf("address %s still exists after destroy (API returned status %d)", rs.Primary.ID, resp.StatusCode)
@@ -190,7 +190,7 @@ func deleteAddressOutOfBand(resourceName string) resource.TestCheckFunc {
 		if err != nil {
 			return err
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
 			return fmt.Errorf("out-of-band delete of address %s failed with status %d", rs.Primary.ID, resp.StatusCode)

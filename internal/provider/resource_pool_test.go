@@ -30,7 +30,7 @@ func testAccCheckPoolDestroyed(s *terraform.State) error {
 		if err != nil {
 			return err
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusNotFound {
 			return fmt.Errorf("pool %s still exists after destroy (API returned status %d)", rs.Primary.ID, resp.StatusCode)

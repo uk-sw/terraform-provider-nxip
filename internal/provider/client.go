@@ -266,7 +266,7 @@ func (c *nxipClient) do(ctx context.Context, method, path string, body any, out 
 		// which Retry-After already says; the last 429's body is the one
 		// that reaches the caller, read below like any other response.
 		_, _ = io.Copy(io.Discard, httpResp.Body)
-		httpResp.Body.Close()
+		_ = httpResp.Body.Close()
 
 		// Warn, so it shows at TF_LOG=WARN and above: an apply that goes
 		// quiet for up to a minute should say why to anyone who looks.
@@ -282,7 +282,7 @@ func (c *nxipClient) do(ctx context.Context, method, path string, body any, out 
 			return http.StatusTooManyRequests, "", fmt.Errorf("stopped waiting for the nxip API rate limit to reset: %w", err)
 		}
 	}
-	defer httpResp.Body.Close()
+	defer func() { _ = httpResp.Body.Close() }()
 
 	// Read the whole body once, regardless of expected shape — a DELETE with
 	// 204 No Content has nothing to read, but everything else (success or
