@@ -26,6 +26,21 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      # gofmt has always been the rule (AGENTS.md, "Writing code") and
+      # until 2026-10-13 nothing checked it. gofmt -l prints the files that
+      # differ from its formatting and nothing when they all match.
+      - name: Format
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "gofmt would change:"; echo "$unformatted"; exit 1
+          fi
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
+
       # Unit tests only - acceptance tests (TF_ACC=1) need a live nxip API,
       # which this repo has no way to stand up on its own now that it's
       # split out of net-saas-monorepo. See that repo's extraction commit

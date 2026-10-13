@@ -1,0 +1,21 @@
+# Weekly dependency updates, grouped so a quiet week is one PR. Security
+# advisories still arrive as their own PR immediately: GO-2026-6617 and
+# GO-2026-6613 sat unseen in this module until CI went red on 2026-10-09
+# (AGENTS.md, "Writing code"). The Go toolchain itself is pinned by the
+# go directive in go.mod; Dependabot proposes that bump too.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
